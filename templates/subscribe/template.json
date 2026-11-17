@@ -1,0 +1,27 @@
+{
+  "id": "subscribe",
+  "description": "Generic subscribe/follow reminder (no platform logos): a pill button pops in, a cursor glides over and clicks it (ripple, label flips to the 'done' state with a check), then taps the bell, which rings. Transparent background.",
+  "duration": 4,
+  "params": {
+    "text": "Button label before the click, default 'Subscribe'",
+    "doneText": "Button label after the click, default 'Subscribed'",
+    "subtext": "Small line under the button, e.g. 'New videos every week' (optional)",
+    "position": "'bottom' (default, bottom centre), 'bottom-left', 'bottom-right' or 'center'",
+    "bell": "'true' (default) to show and ring the notification bell",
+    "accent": "Button colour (hex), default #FF3B4E",
+    "color": "Text colour, default #FFFFFF",
+    "font": "Font family, default Inter",
+    "background": "Solid background used only for opaque .mp4 output, default #0B0B10"
+  },
+  "defaults": {
+    "text": "Subscribe",
+    "doneText": "Subscribed",
+    "subtext": "",
+    "position": "bottom",
+    "bell": "true",
+    "accent": "#FF3B4E",
+    "color": "#FFFFFF",
+    "font": "Inter",
+    "background": "#0B0B10"
+  }
+}

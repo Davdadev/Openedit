@@ -1,0 +1,118 @@
+<style>
+  .cap { position: absolute; left: 0; right: 0; display: flex; justify-content: center; pointer-events: none; }
+  .cap-page { max-width: 86%; text-align: center; will-change: transform, opacity; }
+  .cap-page .w { display: inline-block; white-space: nowrap; }
+
+  /* bold-pop: big uppercase, heavy stroke, active word pops in accent */
+  .s-bold-pop .cap-page {
+    font-family: var(--font), Montserrat, Inter, sans-serif; font-weight: 900; font-size: 9.6rem; line-height: 1.08;
+    letter-spacing: -0.01em; text-transform: uppercase; color: #fff;
+    -webkit-text-stroke: 0.22em #000; paint-order: stroke fill;
+    filter: drop-shadow(0 0.5rem 0 rgba(0, 0, 0, 0.55)) drop-shadow(0 0.8rem 2.4rem rgba(0, 0, 0, 0.45));
+  }
+  .s-bold-pop .w { margin: 0 0.05em; transform-origin: 50% 60%; }
+  .s-bold-pop .w.on { color: var(--accent); }
+
+  /* clean: sentence case on soft rounded boxes, 2 lines */
+  .s-clean .cap-page { max-width: 78%; font-family: var(--font), Inter, sans-serif; font-weight: 600; font-size: 4.6rem; line-height: 1.5; color: #fff; letter-spacing: -0.005em; }
+  .s-clean .box {
+    background: rgba(10, 10, 14, 0.66); padding: 0.18em 0.5em; border-radius: 0.32em;
+    -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  }
+
+  /* karaoke: phrase visible, accent fill sweeps through each word */
+  .s-karaoke .cap-page {
+    max-width: 84%; font-family: var(--font), Inter, sans-serif; font-weight: 800; font-size: 6.6rem; line-height: 1.18; letter-spacing: -0.015em;
+    filter: drop-shadow(0 0.35rem 0 rgba(0, 0, 0, 0.5)) drop-shadow(0 0.6rem 1.8rem rgba(0, 0, 0, 0.55));
+  }
+  .s-karaoke .w {
+    margin: 0 0.03em; color: transparent; -webkit-background-clip: text; background-clip: text;
+    background-image: linear-gradient(90deg, var(--accent) 0%, var(--accent) var(--f, 0%), rgba(255, 255, 255, 0.96) var(--f, 0%), rgba(255, 255, 255, 0.96) 100%);
+    padding: 0.04em 0;
+  }
+
+  /* minimal: small and quiet */
+  .s-minimal .cap-page {
+    max-width: 74%; font-family: var(--font), Inter, sans-serif; font-weight: 500; font-size: 3.8rem; line-height: 1.35; color: #fff; letter-spacing: 0.005em;
+    text-shadow: 0 0.15rem 0.6rem rgba(0, 0, 0, 0.7), 0 0 2rem rgba(0, 0, 0, 0.35);
+  }
+</style>
+<div class="cap" id="cap"><div class="cap-page" id="cap-page"></div></div>
+<script>
+  (function () {
+    var P = OE.params, E = OE.E, H = OE.height;
+    var style = P.style || "bold-pop";
+    var root = document.getElementById("root");
+    root.classList.add("s-" + style);
+    var cap = document.getElementById("cap"), page = document.getElementById("cap-page");
+    var pages = P.pages || [];
+    // vertical placement
+    var pos = P.position || (style === "bold-pop" ? "middle-low" : "bottom");
+    var frac = { top: 0.1, middle: 0.5, "middle-low": OE.portrait ? 0.66 : 0.74, bottom: OE.portrait ? 0.8 : 0.88 }[pos] || 0.88;
+    cap.style.top = (frac * H) + "px";
+    cap.style.transform = pos === "top" ? "none" : pos === "bottom" ? "translateY(-100%)" : "translateY(-50%)";
+
+    var current = -1, words = [];
+    function build(i) {
+      current = i;
+      var pg = pages[i];
+      if (!pg) { page.innerHTML = ""; words = []; return; }
+      var html = pg.words.map(function (w) { return '<span class="w oe-w">' + OE.esc(w.text) + "</span>"; }).join(" ");
+      page.innerHTML = style === "clean" ? '<span class="box">' + html + "</span>" : html;
+      words = Array.prototype.slice.call(page.querySelectorAll(".w"));
+      page.style.fontSize = "";
+      page.__oeBase = null; page.__oeFit = null;
+      fitPage();
+    }
+    var maxW = OE.width * (style === "clean" ? 0.78 : style === "minimal" ? 0.74 : 0.86);
+    function fitPage() { OE.fit(page, { maxLines: 2, maxWidth: maxW }); }
+    function find(t) {
+      for (var i = 0; i < pages.length; i++) if (t >= pages[i].start && t < pages[i].end) return i;
+      return -1;
+    }
+    function contiguous(a, b) { return a && b && Math.abs(b.start - a.end) < 0.06; }
+
+    OE.run(function (t) {
+      var i = find(t);
+      if (i !== current) build(i);
+      else if (i >= 0) fitPage();
+      if (i < 0) { page.style.opacity = 0; return; }
+      var pg = pages[i], prev = pages[i - 1], next = pages[i + 1];
+      var local = t - pg.start, remain = pg.end - t;
+      var inFade = contiguous(prev, pg) ? 1 : OE.tw(t, pg.start, style === "minimal" ? 0.2 : 0.14, E.outCubic);
+      var outFade = contiguous(pg, next) ? 0 : OE.tw(t, pg.end - 0.12, 0.12, E.inCubic);
+
+      if (style === "bold-pop") {
+        var pk = OE.tw(t, pg.start, 0.2, E.outBack);
+        page.style.opacity = Math.min(1, OE.p(t, pg.start, 0.06)) * (1 - outFade);
+        page.style.transform = "scale(" + (0.82 + 0.18 * pk).toFixed(4) + ")";
+        pg.words.forEach(function (w, j) {
+          var el = words[j]; if (!el) return;
+          var nextStart = j < pg.words.length - 1 ? pg.words[j + 1].start : pg.end;
+          var on = t >= w.start && t < Math.max(w.end, nextStart);
+          el.classList.toggle("on", on);
+          var x = t - w.start, s = 1;
+          if (x >= 0) {
+            s = x < 0.09 ? 1 + 0.2 * E.outCubic(x / 0.09) : 1 + 0.2 - 0.12 * E.outCubic(Math.min(1, (x - 0.09) / 0.16));
+            if (!on) s = 1 + (s - 1) * (1 - OE.tw(t, nextStart, 0.1));
+          }
+          el.style.transform = "scale(" + s.toFixed(4) + ") translateY(" + (on ? -0.02 : 0) + "em)";
+          el.style.opacity = x >= -0.001 || j === 0 ? 1 : 0.9;
+        });
+      } else if (style === "karaoke") {
+        page.style.opacity = inFade * (1 - outFade);
+        page.style.transform = "translateY(" + ((1 - inFade) * 1.2).toFixed(3) + "rem)";
+        pg.words.forEach(function (w, j) {
+          var el = words[j]; if (!el) return;
+          var end = Math.max(w.end, w.start + 0.08);
+          var f = OE.clamp((t - w.start) / (end - w.start), 0, 1);
+          el.style.setProperty("--f", (E.inOutCubic(f) * 100).toFixed(2) + "%");
+        });
+      } else {
+        page.style.opacity = inFade * (1 - outFade);
+        var rise = style === "clean" ? 1 : 0.6;
+        page.style.transform = "translateY(" + ((1 - inFade) * rise).toFixed(3) + "rem)";
+      }
+    });
+  })();
+</script>

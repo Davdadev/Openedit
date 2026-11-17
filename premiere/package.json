@@ -1,0 +1,10 @@
+{
+  "name": "openedit-premiere-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "OpenEdit CEP panel for Adobe Premiere Pro (no npm dependencies).",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node test/mock-test.mjs && node test/check-host.mjs"
+  }
+}

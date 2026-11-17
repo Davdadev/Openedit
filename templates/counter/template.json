@@ -1,0 +1,37 @@
+{
+  "id": "counter",
+  "description": "Animated number stat: odometer-style rolling digits (with speed-based motion blur) count up to the value, a progress track fills in sync, the label tracks in; a soft pop when it lands. Transparent background (optional scrim).",
+  "duration": 4,
+  "params": {
+    "value": "Target number, e.g. 1250000 or 98.6 (decimals are kept as written)",
+    "from": "Start number, default 0",
+    "prefix": "Text before the number, e.g. '$' (optional)",
+    "suffix": "Text after the number, e.g. '%', 'K+', ' views' (optional)",
+    "label": "Caption under the number, e.g. 'Monthly viewers' (optional)",
+    "separator": "Thousands separator, default ',' (use '' for none)",
+    "decimals": "Force a number of decimals (optional; default inferred from value)",
+    "align": "'center' (default) or 'left'",
+    "accent": "Accent colour (hex), default #22D3EE",
+    "accent2": "Second gradient colour (hex), default #7C5CFF",
+    "color": "Number colour, default #FFFFFF",
+    "font": "Font family, default Inter",
+    "backdrop": "'none' (default), 'dark' or 'gradient'",
+    "background": "Solid background used only for opaque .mp4 output, default #0B0B10"
+  },
+  "defaults": {
+    "value": 1250000,
+    "from": 0,
+    "prefix": "",
+    "suffix": "",
+    "label": "",
+    "separator": ",",
+    "decimals": "",
+    "align": "center",
+    "accent": "#22D3EE",
+    "accent2": "#7C5CFF",
+    "color": "#FFFFFF",
+    "font": "Inter",
+    "backdrop": "none",
+    "background": "#0B0B10"
+  }
+}

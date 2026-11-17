@@ -1,0 +1,78 @@
+<style>
+  .scrim { position: absolute; inset: 0; opacity: 0; }
+  .scrim.dark { background: rgba(6, 7, 12, 0.76); }
+  .scrim.gradient {
+    background:
+      radial-gradient(80% 90% at 10% 15%, color-mix(in srgb, var(--accent) 38%, transparent) 0%, transparent 60%),
+      radial-gradient(70% 80% at 95% 95%, color-mix(in srgb, var(--accent2) 26%, transparent) 0%, transparent 60%),
+      rgba(6, 7, 12, 0.84);
+  }
+  .qt { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 13% 0 15%; }
+  .qt.center { align-items: center; text-align: center; padding: 0 12%; }
+  .qt-body { position: relative; filter: drop-shadow(0 0.8rem 3rem rgba(0, 0, 0, 0.45)); width: 100%; }
+  .qt-mark {
+    position: absolute; left: -20rem; top: -8.5rem; font: 900 30rem/1 'Playfair Display', Georgia, serif;
+    background: linear-gradient(160deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent;
+    transform-origin: 50% 60%;
+  }
+  .qt.center .qt-mark { left: 50%; top: -19rem; margin-left: -7rem; }
+  .qt-text { font-family: var(--font), 'Playfair Display', Georgia, serif; font-weight: 500; font-size: 8rem; line-height: 1.16; letter-spacing: -0.01em; color: var(--fg); text-wrap: pretty; }
+  .qt-text .oe-w { position: relative; }
+  .qt-text .hl { color: color-mix(in srgb, var(--accent) 55%, white); font-style: italic; }
+  .qt-text .hl::after { content: ""; position: absolute; left: 0.04em; right: 0.04em; bottom: 0.02em; height: 0.09em; border-radius: 0.1em; background: var(--accent); transform-origin: left center; transform: scaleX(var(--u, 0)); }
+  .qt-by { display: flex; align-items: center; gap: 2rem; margin-top: 5rem; font: 700 3rem/1.2 Inter, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg); white-space: nowrap; }
+  .qt.center .qt-by { justify-content: center; }
+  .qt-by i { width: 7rem; height: 0.35rem; border-radius: 1rem; background: var(--accent); transform-origin: left center; }
+  .qt-by span { display: inline-block; }
+  .qt-role { font-weight: 500; color: color-mix(in srgb, var(--fg) 65%, transparent); letter-spacing: 0.1em; }
+  .qt-role:empty { display: none; }
+  .qt-by.empty { display: none; }
+</style>
+<div class="scrim {{backdrop}}" id="qt-scrim"></div>
+<div class="qt {{align}}">
+  <div class="qt-body">
+    <div class="qt-mark" id="qt-mark">&ldquo;</div>
+    <blockquote class="qt-text" id="qt-text"></blockquote>
+    <div class="qt-by" id="qt-by"><i id="qt-rule"></i><span id="qt-author">{{author}}</span><span class="qt-role" id="qt-role">{{role}}</span></div>
+  </div>
+</div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var $ = function (id) { return document.getElementById(id); };
+    var textEl = $("qt-text");
+    var Q = OE.split(textEl, P.quote, { highlight: P.highlight, mask: false, chars: false });
+    if (!String(P.author || "").trim()) $("qt-by").classList.add("empty");
+    var mark = $("qt-mark"), by = $("qt-by"), rule = $("qt-rule"), author = $("qt-author"), roleEl = $("qt-role"), scrim = $("qt-scrim");
+    var n = Q.words.length;
+    var outS = Math.max(2.2, D - 0.7);
+    var revealSpan = Math.min(1.8, Math.max(0.6, (outS - 1.4) * 0.6));
+    var st = revealSpan / Math.max(1, n);
+    var tEnd = 0.35 + revealSpan + 0.5;
+
+    OE.run(function (t) {
+      OE.fit(textEl, { maxLines: 4, lineHeight: 1.16 });
+      scrim.style.opacity = OE.life(t, 0, 0.4, D - 0.4, 0.4);
+      var o = OE.tw(t, outS, 0.55, E.inCubic);
+      var mk = OE.tw(t, 0, 0.9, E.outBack);
+      mark.style.opacity = Math.min(1, mk * 1.4) * (1 - o) * 0.95;
+      mark.style.transform = "translate(" + (-(1 - mk) * 4).toFixed(2) + "rem," + ((1 - mk) * 3).toFixed(2) + "rem) rotate(" + (-(1 - mk) * 18).toFixed(2) + "deg) scale(" + (0.6 + 0.4 * mk).toFixed(4) + ")";
+      Q.words.forEach(function (w, i) {
+        var k = OE.tw(t, 0.35 + i * st, 0.7, E.outCubic);
+        var el = w.el;
+        el.style.opacity = (k * (1 - o)).toFixed(3);
+        el.style.transform = "translateY(" + ((1 - k) * 0.35 - o * 0.2).toFixed(3) + "em)";
+        el.style.filter = "blur(" + ((1 - k) * 0.12 + o * 0.08).toFixed(3) + "em)";
+        if (w.hl) el.style.setProperty("--u", OE.tw(t, 0.35 + i * st + 0.35, 0.6, E.outExpo).toFixed(4));
+      });
+      var rk = OE.tw(t, tEnd - 0.2, 0.8, E.outExpo);
+      rule.style.transform = "scaleX(" + rk.toFixed(4) + ")";
+      [author, roleEl].forEach(function (el, j) {
+        var kk = OE.tw(t, tEnd + j * 0.12, 0.8, E.outExpo);
+        el.style.opacity = kk;
+        el.style.transform = "translateX(" + ((1 - kk) * -2.4).toFixed(3) + "rem)";
+      });
+      by.style.opacity = 1 - o;
+    });
+  })();
+</script>

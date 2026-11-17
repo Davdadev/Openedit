@@ -1,0 +1,73 @@
+<style>
+  .lt { position: absolute; bottom: 11%; display: flex; align-items: stretch; filter: drop-shadow(0 1.2rem 3.2rem rgba(0, 0, 0, 0.4)); }
+  .lt.left { left: 6.5%; }
+  .lt.right { right: 6.5%; flex-direction: row-reverse; text-align: right; }
+  .lt.center { left: 50%; transform: translateX(-50%); }
+  .lt-bar { width: 0.9rem; border-radius: 0.6rem; background: linear-gradient(180deg, var(--accent), var(--accent2)); box-shadow: 0 0 2.4rem color-mix(in srgb, var(--accent) 70%, transparent); }
+  .lt.left .lt-bar, .lt.center .lt-bar { margin-right: 1.4rem; }
+  .lt.right .lt-bar { margin-left: 1.4rem; }
+  .lt-panel {
+    position: relative; padding: 2.4rem 4.4rem 2.6rem 3.2rem; border-radius: 1.4rem;
+    background: linear-gradient(135deg, rgba(20, 20, 28, 0.9), rgba(14, 14, 20, 0.72));
+    border: 0.12rem solid rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+  }
+  .lt.right .lt-panel { padding: 2.4rem 3.2rem 2.6rem 4.4rem; }
+  .lt-panel::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(60% 120% at 0% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%);
+  }
+  .lt.none .lt-panel { background: none; border: none; padding-left: 0.6rem; padding-right: 0.6rem; }
+  .lt.none .lt-panel::before { display: none; }
+  .lt.none { filter: drop-shadow(0 0.3rem 1.2rem rgba(0, 0, 0, 0.75)); }
+  .lt-name { position: relative; font: 800 5.8rem/1.05 var(--font), Inter, sans-serif; letter-spacing: -0.025em; color: var(--fg); white-space: nowrap; }
+  .lt-role {
+    position: relative; margin-top: 1rem; font: 600 2.3rem/1.1 var(--font), Inter, sans-serif; letter-spacing: 0.2em; text-transform: uppercase;
+    color: color-mix(in srgb, var(--accent) 45%, white); white-space: nowrap;
+  }
+  .lt-role:empty { display: none; }
+</style>
+<div class="lt {{position}} {{panel}}" id="lt">
+  <div class="lt-bar" id="lt-bar"></div>
+  <div class="lt-panel" id="lt-panel">
+    <div class="lt-name" id="lt-name"></div>
+    <div class="lt-role" id="lt-role">{{role}}</div>
+  </div>
+</div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var nameEl = OE.$("#lt-name"), role = OE.$("#lt-role"), bar = OE.$("#lt-bar"), panel = OE.$("#lt-panel");
+    var N = OE.split(nameEl, P.name);
+    var right = P.position === "right";
+    bar.style.transformOrigin = "center bottom";
+    var n = N.chars.length, st = Math.min(0.028, 0.5 / Math.max(1, n));
+    var outS = Math.max(1.4, D - 0.7);
+    var maxW = OE.width * 0.8;
+
+    OE.run(function (t) {
+      OE.fit(nameEl, { maxLines: 1, maxWidth: maxW, lineHeight: 1.05 });
+      // bar
+      var b = OE.tw(t, 0.0, 0.55, E.outExpo) * (1 - OE.tw(t, outS + 0.35, 0.3, E.inCubic));
+      bar.style.transform = "scaleY(" + b.toFixed(4) + ")";
+      bar.style.opacity = Math.min(1, b * 3);
+      // panel wipe
+      var pk = OE.tw(t, 0.18, 0.75, E.outExpo), po = OE.tw(t, outS, 0.45, E.inQuart);
+      var hidden = (1 - pk + po) * 100;
+      panel.style.clipPath = right
+        ? "inset(0 0 0 " + hidden.toFixed(2) + "% round 1.4rem)"
+        : "inset(0 " + hidden.toFixed(2) + "% 0 0 round 1.4rem)";
+      panel.style.transform = "translateX(" + ((right ? 1 : -1) * (1 - pk) * 3).toFixed(3) + "rem)";
+      // name chars
+      N.chars.forEach(function (c, i) {
+        var k = OE.tw(t, 0.38 + i * st, 0.7, E.outExpo);
+        c.style.transform = "translate3d(0," + ((1 - k) * 110).toFixed(2) + "%,0)";
+      });
+      // role
+      var rk = OE.tw(t, 0.62, 0.7, E.outExpo);
+      role.style.opacity = rk;
+      role.style.transform = "translateX(" + ((right ? 1 : -1) * (1 - rk) * 2.4).toFixed(3) + "rem)";
+      role.style.letterSpacing = (0.2 + (1 - rk) * 0.12).toFixed(4) + "em";
+    });
+  })();
+</script>

@@ -1,0 +1,140 @@
+<style>
+  .scrim { position: absolute; inset: 0; opacity: 0; }
+  .scrim.dark { background: rgba(6, 7, 12, 0.76); }
+  .scrim.gradient {
+    background:
+      radial-gradient(80% 90% at 15% 20%, color-mix(in srgb, var(--accent) 40%, transparent) 0%, transparent 60%),
+      radial-gradient(70% 80% at 90% 90%, color-mix(in srgb, var(--accent2) 35%, transparent) 0%, transparent 60%),
+      rgba(6, 7, 12, 0.82);
+  }
+  .ct { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 9%; }
+  .ct.center { align-items: center; text-align: center; }
+  .ct.left { align-items: flex-start; }
+  .ct-in { display: flex; flex-direction: column; align-items: inherit; filter: drop-shadow(0 1rem 3rem rgba(0, 0, 0, 0.45)); }
+  .ct-num { display: flex; align-items: baseline; font-family: var(--font), Inter, sans-serif; font-weight: 900; font-size: 22rem; line-height: 1; letter-spacing: -0.03em; color: var(--fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ct-aff { font-size: 0.5em; font-weight: 800; letter-spacing: -0.01em; background: linear-gradient(120deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .ct-aff.pre { margin-right: 0.06em; align-self: flex-start; margin-top: 0.12em; }
+  .ct-aff.suf { margin-left: 0.06em; }
+  .ct-aff:empty { display: none; }
+  .ct-digits { display: flex; }
+  .ct-col { position: relative; display: inline-block; height: 1em; overflow: hidden; }
+  .ct-strip { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; }
+  .ct-strip span { height: 1em; line-height: 1em; text-align: center; }
+  .ct-sep { display: inline-block; overflow: hidden; height: 1em; line-height: 1em; opacity: 0.85; }
+  .ct-track { position: relative; width: 100%; height: 0.8rem; margin-top: 3.4rem; border-radius: 1rem; background: rgba(255, 255, 255, 0.14); overflow: hidden; }
+  .ct-track i { position: absolute; inset: 0; border-radius: 1rem; background: linear-gradient(90deg, var(--accent), var(--accent2)); transform-origin: left center; box-shadow: 0 0 2rem var(--accent); }
+  .ct-label { margin-top: 2.8rem; font: 700 3.4rem/1.2 var(--font), Inter, sans-serif; letter-spacing: 0.22em; text-transform: uppercase; color: color-mix(in srgb, var(--fg) 82%, transparent); white-space: nowrap; }
+  .ct-label:empty { display: none; }
+</style>
+<div class="scrim {{backdrop}}" id="ct-scrim"></div>
+<div class="ct {{align}}">
+  <div class="ct-in" id="ct-in">
+    <div class="ct-num" id="ct-num"><span class="ct-aff pre">{{prefix}}</span><span class="ct-digits" id="ct-digits"></span><span class="ct-aff suf">{{suffix}}</span></div>
+    <div class="ct-track" id="ct-track"><i id="ct-fill"></i></div>
+    <div class="ct-label" id="ct-label">{{label}}</div>
+  </div>
+</div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var $ = function (id) { return document.getElementById(id); };
+    var raw = String(P.value == null ? "0" : P.value).replace(/[^0-9.\-]/g, "");
+    var target = parseFloat(raw) || 0;
+    var dec = P.decimals !== "" && P.decimals != null && isFinite(parseInt(P.decimals, 10)) ? parseInt(P.decimals, 10) : (raw.split(".")[1] || "").length;
+    dec = OE.clamp(dec, 0, 6);
+    var from = parseFloat(P.from) || 0;
+    var neg = target < 0;
+    var scale = Math.pow(10, dec);
+    var T = Math.round(Math.abs(target) * scale), F = Math.round(Math.abs(from) * scale);
+    var sep = P.separator == null ? "," : String(P.separator);
+    var places = Math.max(dec + 1, String(Math.max(T, F)).length);
+    var digits = $("ct-digits");
+    var cols = [];
+    // Build columns from most-significant place to units.
+    for (var pIdx = places - 1; pIdx >= 0; pIdx--) {
+      var col = document.createElement("span");
+      col.className = "ct-col";
+      var strip = document.createElement("span");
+      strip.className = "ct-strip";
+      for (var d = 0; d <= 10; d++) {
+        var s = document.createElement("span");
+        s.textContent = String(d % 10);
+        strip.appendChild(s);
+      }
+      col.appendChild(strip);
+      digits.appendChild(col);
+      var entry = { place: pIdx, col: col, strip: strip, sep: null };
+      cols.push(entry);
+      var intPlace = pIdx - dec;
+      if (pIdx === dec && dec > 0) {
+        var dp = document.createElement("span"); dp.className = "ct-sep"; dp.textContent = ".";
+        digits.appendChild(dp);
+      } else if (sep && intPlace > 0 && intPlace % 3 === 0) {
+        var sp = document.createElement("span"); sp.className = "ct-sep"; sp.textContent = sep;
+        digits.appendChild(sp); entry.sep = sp;
+      }
+    }
+    if (neg) { var m = document.createElement("span"); m.className = "ct-sep"; m.textContent = "−"; digits.insertBefore(m, digits.firstChild); }
+    // Measure the widest digit for fixed column widths.
+    var probe = document.createElement("span"); probe.textContent = "0"; probe.style.display = "inline-block"; digits.appendChild(probe);
+    var dw = probe.getBoundingClientRect().width; digits.removeChild(probe);
+    var sepW = cols.map(function (c) { return c.sep ? c.sep.getBoundingClientRect().width : 0; });
+    cols.forEach(function (c) { c.col.style.width = dw + "px"; c.strip.style.width = dw + "px"; });
+
+    var numEl = $("ct-num"), fill = $("ct-fill"), label = $("ct-label"), track = $("ct-track"), inner = $("ct-in"), scrim = $("ct-scrim");
+    var outS = Math.max(1.8, D - 0.55);
+    var c0 = 0.25, c1 = Math.max(c0 + 0.8, Math.min(outS - 0.5, 2.6));
+    function valAt(t) { return OE.lerp(F, T, OE.tw(t, c0, c1 - c0, E.outQuart)); }
+    // Fit the whole number line to the frame width once.
+    var maxW = OE.width * 0.84;
+    var lastFit = null;
+    function fitNum() {
+      var key = document.fonts ? document.fonts.status : "loaded";
+      if (lastFit === key) return; lastFit = key;
+      numEl.style.fontSize = "";
+      var base = parseFloat(getComputedStyle(numEl).fontSize);
+      var w = numEl.scrollWidth;
+      if (w > maxW) numEl.style.fontSize = (base * maxW / w) + "px";
+      track.style.width = Math.min(numEl.scrollWidth, maxW) + "px";
+    }
+
+    OE.run(function (t) {
+      fitNum();
+      scrim.style.opacity = OE.life(t, 0, 0.35, D - 0.35, 0.35);
+      var v = valAt(t), v2 = valAt(t + 1 / 60);
+      var speed = Math.abs(v2 - v) * 60; // units per second
+      var em = parseFloat(getComputedStyle(numEl).fontSize);
+      cols.forEach(function (c) {
+        var unit = Math.pow(10, c.place);
+        var pos = (v / unit) % 10;
+        if (c.place > 0) {
+          // higher places tick with a short eased roll at each carry
+          var whole = Math.floor(v / unit), frac = v / unit - whole;
+          var lowRoll = OE.clamp((frac - 0.9) / 0.1, 0, 1);
+          pos = (whole % 10) + E.inOutCubic(lowRoll);
+        }
+        c.strip.style.transform = "translateY(" + (-pos * em).toFixed(2) + "px)";
+        var digitsPerSec = speed / unit;
+        var blur = OE.clamp(digitsPerSec * 0.004, 0, 0.06) * em;
+        c.strip.style.filter = blur > 0.4 ? "blur(" + (blur * 0.35).toFixed(2) + "px)" : "none";
+        // leading zeros collapse until significant
+        var sig = c.place <= dec ? 1 : OE.clamp((Math.max(v, 1) - unit * 0.6) / (unit * 0.4), 0, 1);
+        if (c.place > dec && Math.max(T, F) < unit) sig = 0;
+        c.col.style.width = (dw * E.outCubic(sig)).toFixed(2) + "px";
+        c.col.style.opacity = sig.toFixed(3);
+        if (c.sep) { c.sep.style.width = (sepW[cols.indexOf(c)] * sig).toFixed(2) + "px"; c.sep.style.opacity = (0.85 * sig).toFixed(3); }
+      });
+      // entrance / landing pop / exit
+      var ik = OE.tw(t, 0, 0.6, E.outExpo), ok = OE.tw(t, outS, 0.45, E.inQuart);
+      var land = OE.p(t, c1 - 0.05, 0.5);
+      var pop = 1 + 0.045 * Math.sin(Math.PI * land) * (1 - land * 0.3);
+      inner.style.opacity = Math.min(1, ik * 1.5) * (1 - ok);
+      inner.style.transform = "translateY(" + ((1 - ik) * 4 - ok * 3).toFixed(3) + "rem) scale(" + (pop * (1 - 0.06 * ok)).toFixed(4) + ")";
+      inner.style.filter = "drop-shadow(0 1rem 3rem rgba(0,0,0,0.45)) blur(" + ((1 - ik) * 1 + ok * 1.2).toFixed(3) + "rem)";
+      fill.style.transform = "scaleX(" + (T === F ? OE.tw(t, c0, c1 - c0, E.outQuart) : OE.clamp((v - F) / (T - F), 0, 1)).toFixed(4) + ")";
+      var lk = OE.tw(t, 0.45, 0.8, E.outExpo);
+      label.style.opacity = lk;
+      label.style.letterSpacing = (0.22 + (1 - lk) * 0.18).toFixed(4) + "em";
+    });
+  })();
+</script>

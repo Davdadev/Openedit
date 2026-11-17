@@ -1,0 +1,126 @@
+<style>
+  #co-svg { position: absolute; inset: 0; overflow: visible; }
+  .co-label {
+    position: absolute; top: 0; left: 0; display: inline-flex; align-items: center; gap: 1.2rem;
+    padding: 1.5rem 3rem; border-radius: 99rem; white-space: nowrap;
+    background: var(--accent); color: var(--co-ink, #0b0b10);
+    font: 800 3.6rem/1 var(--font), Inter, sans-serif; letter-spacing: -0.01em;
+    box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.35), 0 0 0 0.3rem color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .co-label span { display: inline-block; }
+</style>
+<svg id="co-svg" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <mask id="co-mask">
+      <rect x="0" y="0" width="100%" height="100%" fill="white" />
+      <rect id="co-hole" fill="black" />
+    </mask>
+    <filter id="co-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="8" /></filter>
+  </defs>
+  <rect id="co-dim" x="0" y="0" width="100%" height="100%" fill="#05060a" mask="url(#co-mask)" opacity="0" />
+  <rect id="co-box-glow" fill="none" filter="url(#co-glow)" />
+  <rect id="co-box" fill="none" />
+  <circle id="co-ring1" fill="none" />
+  <circle id="co-ring2" fill="none" />
+  <circle id="co-dot" />
+  <polyline id="co-line" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+  <circle id="co-end" />
+</svg>
+<div class="co-label" id="co-label"><span id="co-text">{{text}}</span></div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E, W = OE.width, H = OE.height, R = OE.rem;
+    var accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#FFD43B";
+    var ink = P.textColor || (OE.luminance(accent) > 0.35 ? "#0B0B10" : "#FFFFFF");
+    document.documentElement.style.setProperty("--co-ink", ink);
+    var $ = function (id) { return document.getElementById(id); };
+    var svg = $("co-svg");
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("width", W); svg.setAttribute("height", H);
+    var num = function (v, d) { v = parseFloat(v); return isFinite(v) ? v : d; };
+
+    var box = null;
+    var bp = String(P.box || "").split(/[ ,]+/).map(parseFloat).filter(isFinite);
+    if (bp.length === 4) box = { x: bp[0] * W, y: bp[1] * H, w: bp[2] * W, h: bp[3] * H };
+    var spotlight = box && String(P.spotlight) !== "false";
+    var cx = box ? box.x + box.w / 2 : OE.clamp(num(P.x, 0.62), 0, 1) * W;
+    var cy = box ? box.y + box.h / 2 : OE.clamp(num(P.y, 0.42), 0, 1) * H;
+    var dx = cx < W / 2 ? 1 : -1;
+    var dy = cy > H / 2 ? -1 : 1;
+    var tx = box ? (dx > 0 ? box.x + box.w : box.x) : cx;
+    var ty = cy;
+    var diag = 11 * R, run = 9 * R;
+    var ex = tx + dx * diag, ey = ty + dy * diag;
+    var fx = ex + dx * run, fy = ey;
+
+    var lw = 0.6 * R;
+    var line = $("co-line");
+    line.setAttribute("points", [tx, ty, ex, ey, fx, fy].join(" "));
+    line.setAttribute("stroke", accent);
+    line.setAttribute("stroke-width", lw);
+    var lineLen = Math.hypot(ex - tx, ey - ty) + Math.abs(fx - ex);
+    line.setAttribute("stroke-dasharray", lineLen + " " + lineLen);
+
+    var dot = $("co-dot"), r1 = $("co-ring1"), r2 = $("co-ring2"), endDot = $("co-end");
+    [dot, endDot].forEach(function (c) { c.setAttribute("fill", accent); });
+    dot.setAttribute("cx", tx); dot.setAttribute("cy", ty);
+    endDot.setAttribute("cx", fx); endDot.setAttribute("cy", fy);
+    [r1, r2].forEach(function (c) { c.setAttribute("cx", cx); c.setAttribute("cy", cy); c.setAttribute("stroke", accent); c.setAttribute("stroke-width", 0.4 * R); });
+
+    var rad = 1.6 * R, per = 0;
+    if (box) {
+      [$("co-box"), $("co-box-glow"), $("co-hole")].forEach(function (r) {
+        r.setAttribute("x", box.x); r.setAttribute("y", box.y); r.setAttribute("width", box.w); r.setAttribute("height", box.h);
+        r.setAttribute("rx", rad); r.setAttribute("ry", rad);
+      });
+      $("co-box").setAttribute("stroke", accent); $("co-box").setAttribute("stroke-width", 0.6 * R);
+      $("co-box-glow").setAttribute("stroke", accent); $("co-box-glow").setAttribute("stroke-width", 1.2 * R);
+      per = 2 * (box.w + box.h);
+      ["co-box", "co-box-glow"].forEach(function (id) { $(id).setAttribute("stroke-dasharray", per + " " + per); });
+      [r1, r2, dot].forEach(function (c) { c.style.display = "none"; });
+    }
+
+    var label = $("co-label"), text = $("co-text");
+    var lwid = label.offsetWidth, lh = label.offsetHeight;
+    var gap = 1.4 * R;
+    var lx = dx > 0 ? fx + gap : fx - gap - lwid;
+    lx = OE.clamp(lx, 0.03 * W, W - 0.03 * W - lwid);
+    label.style.left = lx + "px";
+    label.style.top = fy - lh / 2 + "px";
+    label.style.transformOrigin = dx > 0 ? "left center" : "right center";
+
+    var outS = Math.max(1.6, D - 0.6);
+    OE.run(function (t) {
+      // target
+      if (box) {
+        var bk = OE.tw(t, 0.0, 0.7, E.inOutCubic), bo = OE.tw(t, outS + 0.2, 0.35, E.inCubic);
+        ["co-box", "co-box-glow"].forEach(function (id) {
+          $(id).setAttribute("stroke-dashoffset", (per * (1 - bk)).toFixed(2));
+          $(id).style.opacity = (id === "co-box-glow" ? 0.55 : 1) * (1 - bo);
+        });
+        $("co-dim").setAttribute("opacity", spotlight ? (0.5 * OE.life(t, 0.1, 0.6, outS + 0.15, 0.4)).toFixed(3) : 0);
+      } else {
+        var dk = OE.tw(t, 0.0, 0.45, E.outBack), dO = OE.tw(t, outS + 0.25, 0.3, E.inCubic);
+        dot.setAttribute("r", (1.1 * R * dk * (1 - dO)).toFixed(2));
+        [r1, r2].forEach(function (c, i) {
+          var ph = ((t - 0.15 - i * 0.6) / 1.2);
+          var f = ph < 0 ? 0 : ph - Math.floor(ph);
+          var vis = (t > 0.15 + i * 0.6 ? 1 : 0) * (1 - dO);
+          c.setAttribute("r", (1.1 * R + f * 4.2 * R).toFixed(2));
+          c.style.opacity = ((1 - f) * 0.9 * vis).toFixed(3);
+        });
+      }
+      // leader line
+      var lk = OE.tw(t, box ? 0.45 : 0.25, 0.55, E.inOutCubic), lo = OE.tw(t, outS + 0.05, 0.4, E.inCubic);
+      line.setAttribute("stroke-dashoffset", (lineLen * (1 - lk) - lineLen * lo).toFixed(2));
+      endDot.setAttribute("r", (0.75 * R * OE.tw(t, (box ? 0.45 : 0.25) + 0.5, 0.25, E.outBack) * (1 - OE.tw(t, outS, 0.2, E.inCubic))).toFixed(2));
+      // label
+      var k = OE.tw(t, box ? 0.9 : 0.7, 0.6, E.outExpo), o = OE.tw(t, outS - 0.1, 0.35, E.inQuart);
+      var hid = (1 - k + o) * 100;
+      label.style.clipPath = dx > 0 ? "inset(-50% " + hid.toFixed(2) + "% -50% -5% round 99rem)" : "inset(-50% -5% -50% " + hid.toFixed(2) + "% round 99rem)";
+      label.style.transform = "scale(" + (0.9 + 0.1 * k).toFixed(4) + ")";
+      text.style.transform = "translateX(" + (-dx * (1 - k) * 3).toFixed(3) + "rem)";
+      label.style.opacity = k > 0.001 ? 1 : 0;
+    });
+  })();
+</script>

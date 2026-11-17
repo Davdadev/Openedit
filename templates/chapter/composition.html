@@ -1,0 +1,75 @@
+<style>
+  .scrim { position: absolute; inset: 0; opacity: 0; }
+  .scrim.dark { background: linear-gradient(90deg, rgba(6, 7, 12, 0.88) 0%, rgba(6, 7, 12, 0.55) 100%); }
+  .scrim.gradient {
+    background:
+      radial-gradient(70% 90% at 12% 50%, color-mix(in srgb, var(--accent) 30%, transparent) 0%, transparent 60%),
+      radial-gradient(60% 80% at 95% 95%, color-mix(in srgb, var(--accent2) 26%, transparent) 0%, transparent 60%),
+      rgba(6, 7, 12, 0.86);
+  }
+  .ch { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 8%; gap: 5.5rem; }
+  .ch.portrait { flex-direction: column; justify-content: center; align-items: flex-start; gap: 2rem; }
+  .ch-num-wrap { position: relative; flex: none; filter: drop-shadow(0 1rem 3rem rgba(0, 0, 0, 0.4)); }
+  .ch-num { font-family: var(--font), Inter, sans-serif; font-weight: 900; font-size: 30rem; line-height: 0.86; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ch-num.outline { color: transparent; -webkit-text-stroke: 0.32rem color-mix(in srgb, var(--fg) 85%, transparent); }
+  .ch-num.fill { position: absolute; left: 0; top: 0; background: linear-gradient(180deg, var(--accent2), var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .ch-side { position: relative; min-width: 0; flex: 1; filter: drop-shadow(0 0.8rem 2.6rem rgba(0, 0, 0, 0.45)); }
+  .ch-label { display: flex; align-items: center; gap: 2rem; margin-bottom: 2.6rem; font: 700 2.8rem/1 var(--font), Inter, sans-serif; letter-spacing: 0.34em; text-transform: uppercase; color: var(--accent); white-space: nowrap; }
+  .ch-label i { flex: none; width: 8rem; height: 0.4rem; border-radius: 1rem; background: var(--accent); transform-origin: left center; }
+  .ch-label span { display: inline-block; }
+  .ch-title { font-family: var(--font), Inter, sans-serif; font-weight: 800; font-size: 10.5rem; line-height: 1.02; letter-spacing: -0.035em; color: var(--fg); text-wrap: balance; }
+</style>
+<div class="scrim {{backdrop}}" id="ch-scrim"></div>
+<div class="ch" id="ch">
+  <div class="ch-num-wrap" id="ch-num-wrap">
+    <div class="ch-num outline" id="ch-out"></div>
+    <div class="ch-num fill" id="ch-fill"></div>
+  </div>
+  <div class="ch-side" id="ch-side">
+    <div class="ch-label"><i id="ch-rule"></i><span id="ch-label"></span></div>
+    <h2 class="ch-title" id="ch-title"></h2>
+  </div>
+</div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var $ = function (id) { return document.getElementById(id); };
+    var raw = String(P.number == null ? "1" : P.number).trim();
+    var num = /^\d$/.test(raw) ? "0" + raw : raw;
+    $("ch-out").textContent = num;
+    $("ch-fill").textContent = num;
+    $("ch-label").textContent = (P.label == null ? "Chapter" : String(P.label)) + " " + num;
+    if (OE.portrait) $("ch").classList.add("portrait");
+    var title = $("ch-title");
+    var T = OE.split(title, P.title);
+    var wrap = $("ch-num-wrap"), fillEl = $("ch-fill"), outl = $("ch-out"), rule = $("ch-rule"), lab = $("ch-label"), side = $("ch-side"), scrim = $("ch-scrim");
+    var n = T.chars.length, st = Math.min(0.03, 0.6 / Math.max(1, n));
+    var outS = Math.max(1.8, D - 0.6);
+
+    OE.run(function (t) {
+      OE.fit(title, { maxLines: 2, lineHeight: 1.02 });
+      scrim.style.opacity = OE.life(t, 0, 0.35, D - 0.35, 0.35);
+      var o = OE.tw(t, outS, 0.5, E.inQuart);
+      // number: outline draws in (scale/opacity), fill sweeps bottom→top
+      var nk = OE.tw(t, 0, 0.8, E.outExpo);
+      outl.style.opacity = nk;
+      wrap.style.transform = "translateX(" + ((1 - nk) * -4 - o * 6).toFixed(3) + "rem) scale(" + (0.92 + 0.08 * nk).toFixed(4) + ")";
+      wrap.style.opacity = 1 - o;
+      var fk = OE.tw(t, 0.35, 1.0, E.inOutQuart);
+      fillEl.style.clipPath = "inset(" + ((1 - fk) * 100).toFixed(2) + "% -5% -5% -5%)";
+      // rule + label
+      var rk = OE.tw(t, 0.3, 0.8, E.outExpo);
+      rule.style.transform = "scaleX(" + rk.toFixed(4) + ")";
+      var lk = OE.tw(t, 0.45, 0.8, E.outExpo);
+      lab.style.opacity = lk;
+      lab.style.letterSpacing = (0.34 + (1 - lk) * 0.25).toFixed(4) + "em";
+      // title chars
+      T.chars.forEach(function (c, i) {
+        var k = OE.tw(t, 0.55 + i * st, 0.8, E.outExpo);
+        c.style.transform = "translate3d(0," + ((1 - k) * 115).toFixed(2) + "%,0)";
+      });
+      side.style.clipPath = "inset(-20% -10% -20% " + (o * 110 - 10).toFixed(2) + "%)";
+      side.style.transform = "translateX(" + (o * -8).toFixed(3) + "rem)";
+    });
+  })();
+</script>

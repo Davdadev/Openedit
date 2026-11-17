@@ -1,0 +1,30 @@
+{
+  "id": "quote",
+  "description": "Pull quote: an oversized accent quotation mark swings in, the quote resolves word by word out of a soft blur, highlighted words get an accent underline sweep, then the attribution slides in behind a growing rule. Transparent background (optional scrim).",
+  "duration": 6,
+  "params": {
+    "quote": "The quote text (auto-fit, up to ~4 lines)",
+    "author": "Who said it (optional)",
+    "role": "Author's role/source, shown after the name (optional)",
+    "highlight": "Comma-separated words to emphasise with the accent underline (optional)",
+    "align": "'left' (default) or 'center'",
+    "accent": "Accent colour (hex), default #FF7A59",
+    "color": "Text colour, default #FFFFFF",
+    "font": "Quote font family, default 'Playfair Display' (attribution uses Inter)",
+    "backdrop": "'none' (default), 'dark' or 'gradient'",
+    "background": "Solid background used only for opaque .mp4 output, default #0B0B10"
+  },
+  "defaults": {
+    "quote": "The best way to predict the future is to invent it.",
+    "author": "Alan Kay",
+    "role": "",
+    "highlight": "",
+    "align": "left",
+    "accent": "#FF7A59",
+    "accent2": "#FFB86B",
+    "color": "#FFFFFF",
+    "font": "Playfair Display",
+    "backdrop": "none",
+    "background": "#0B0B10"
+  }
+}

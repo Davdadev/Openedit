@@ -1,0 +1,27 @@
+{
+  "id": "lower-third",
+  "description": "Name + role lower third: an accent bar grows, a dark glass panel wipes out of it, the name rises letter by letter and the role slides in. Reverses out. Transparent background.",
+  "duration": 5,
+  "params": {
+    "name": "Person's name (one line, auto-fit)",
+    "role": "Role / title / handle under the name (optional)",
+    "position": "'left' (default), 'right' or 'center' — horizontal placement in the lower area",
+    "accent": "Accent colour (hex), default #7C5CFF",
+    "accent2": "Second gradient colour for the bar (hex), default #22D3EE",
+    "color": "Name colour, default #FFFFFF",
+    "font": "Font family, default Inter",
+    "panel": "'glass' (default, dark translucent panel) or 'none' (text only, with shadow)",
+    "background": "Solid background used only for opaque .mp4 output, default #0B0B10"
+  },
+  "defaults": {
+    "name": "Alex Rivera",
+    "role": "Senior Video Editor",
+    "position": "left",
+    "accent": "#7C5CFF",
+    "accent2": "#22D3EE",
+    "color": "#FFFFFF",
+    "font": "Inter",
+    "panel": "glass",
+    "background": "#0B0B10"
+  }
+}

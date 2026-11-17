@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width={{WIDTH}}, height={{HEIGHT}}" />
+    <!-- OpenEdit motion composition (HyperFrames seek protocol, no external scripts). -->
+    <style>
+      :root {
+        --W: {{WIDTH}}px;
+        --H: {{HEIGHT}}px;
+{{VARS}}
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html {
+        font-size: {{REM}}px;
+      }
+      html,
+      body {
+        width: {{WIDTH}}px;
+        height: {{HEIGHT}}px;
+        overflow: hidden;
+        background: {{BACKGROUND}};
+        -webkit-font-smoothing: antialiased;
+        text-rendering: geometricPrecision;
+      }
+      #root {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        font-family: var(--font), Inter, sans-serif;
+        color: var(--fg);
+      }
+      .oe-w {
+        display: inline-block;
+        white-space: nowrap;
+      }
+      .oe-mask {
+        overflow: hidden;
+        vertical-align: top;
+        padding: 0.08em 0.04em 0.16em;
+        margin: -0.08em -0.04em -0.16em;
+      }
+      .oe-c {
+        display: inline-block;
+        will-change: transform, opacity;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="{{DURATION}}"
+      data-fps="{{FPS}}"
+      data-width="{{WIDTH}}"
+      data-height="{{HEIGHT}}"
+    >
+{{BODY}}
+    </div>
+    <script type="application/json" id="oe-data">{{DATA}}</script>
+    <script>
+{{RUNTIME}}
+    </script>
+    <script>
+{{SCRIPT}}
+    </script>
+  </body>
+</html>

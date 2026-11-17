@@ -1,0 +1,31 @@
+{
+  "id": "title-card",
+  "description": "Big kinetic title: characters rise out of per-word masks, an accent bar wipes in, the subtitle tracks in; exits upward. Transparent background (optional scrim).",
+  "duration": 4,
+  "params": {
+    "title": "Main title text (wraps to max 2 lines, auto-fit)",
+    "subtitle": "Smaller line under the accent bar (optional)",
+    "eyebrow": "Tiny pill label above the title, e.g. 'EPISODE 4' (optional)",
+    "highlight": "Comma-separated words of the title to paint in the accent colour (optional)",
+    "align": "'center' (default) or 'left'",
+    "accent": "Accent colour (hex), default #7C5CFF",
+    "accent2": "Second gradient colour (hex), default #22D3EE",
+    "color": "Text colour, default #FFFFFF",
+    "font": "Font family (bundled: Inter, Montserrat, Outfit, Poppins, Archivo Black, Oswald, League Gothic, Playfair Display...), default Inter",
+    "backdrop": "'none' (default, fully transparent), 'dark' (soft scrim) or 'gradient' (accent-tinted scrim)",
+    "background": "Solid background used only for opaque .mp4 output, default #0B0B10"
+  },
+  "defaults": {
+    "title": "Make Something Great",
+    "subtitle": "",
+    "eyebrow": "",
+    "highlight": "",
+    "align": "center",
+    "accent": "#7C5CFF",
+    "accent2": "#22D3EE",
+    "color": "#FFFFFF",
+    "font": "Inter",
+    "backdrop": "none",
+    "background": "#0B0B10"
+  }
+}

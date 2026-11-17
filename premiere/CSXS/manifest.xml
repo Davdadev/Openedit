@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OpenEdit bridge for Adobe Premiere Pro (CEP panel).
+
+  Host range: Premiere Pro 23.0 (2023) and later. Premiere 23.x/24.x ship
+  CEP 11 and 25.x+ ship CEP 12, so the required runtime is CSXS 11.0.
+  Node.js in the panel page (enable-nodejs + mixed-context) needs CEP 7+.
+  The extension is unsigned: install.sh / install.ps1 turn on PlayerDebugMode.
+-->
+<ExtensionManifest Version="7.0"
+  ExtensionBundleId="com.openedit.premiere"
+  ExtensionBundleVersion="0.1.0"
+  ExtensionBundleName="OpenEdit"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <ExtensionList>
+    <Extension Id="com.openedit.premiere.panel" Version="0.1.0" />
+  </ExtensionList>
+
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="PPRO" Version="[23.0,99.9]" />
+    </HostList>
+    <LocaleList>
+      <Locale Code="All" />
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="11.0" />
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+
+  <DispatchInfoList>
+    <Extension Id="com.openedit.premiere.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <ScriptPath>./host/openedit.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--enable-nodejs</Parameter>
+            <Parameter>--mixed-context</Parameter>
+            <Parameter>--allow-file-access</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>OpenEdit</Menu>
+          <Geometry>
+            <Size>
+              <Height>360</Height>
+              <Width>320</Width>
+            </Size>
+            <MinSize>
+              <Height>200</Height>
+              <Width>240</Width>
+            </MinSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>

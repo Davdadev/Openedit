@@ -1,0 +1,27 @@
+{
+  "id": "chapter",
+  "description": "Chapter card: a huge outlined chapter number fills with an accent gradient from the bottom up, a rule draws, the 'CHAPTER 02' label tracks in and the chapter title rises out of masks; exits with a sideways mask slide. Transparent background (optional scrim).",
+  "duration": 4,
+  "params": {
+    "number": "Chapter number (shown zero-padded to 2 digits if numeric), default 1",
+    "title": "Chapter title (auto-fit, max 2 lines)",
+    "label": "Small label word, default 'Chapter'",
+    "accent": "Accent colour (hex), default #A3E635",
+    "accent2": "Second gradient colour (hex), default #22D3EE",
+    "color": "Text colour, default #FFFFFF",
+    "font": "Font family, default Inter",
+    "backdrop": "'none' (default), 'dark' or 'gradient'",
+    "background": "Solid background used only for opaque .mp4 output, default #0B0B10"
+  },
+  "defaults": {
+    "number": 1,
+    "title": "Getting Started",
+    "label": "Chapter",
+    "accent": "#A3E635",
+    "accent2": "#22D3EE",
+    "color": "#FFFFFF",
+    "font": "Inter",
+    "backdrop": "none",
+    "background": "#0B0B10"
+  }
+}

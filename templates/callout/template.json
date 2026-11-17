@@ -1,0 +1,27 @@
+{
+  "id": "callout",
+  "description": "Pointer callout: a pulsing target dot (or a self-drawing highlight box with optional spotlight dimming) connected by an animated elbow leader line to a label pill. Transparent background.",
+  "duration": 4,
+  "params": {
+    "text": "Label text (keep it short, 1–5 words)",
+    "x": "Target X as a fraction of the frame width (0–1), default 0.62",
+    "y": "Target Y as a fraction of the frame height (0–1), default 0.42",
+    "box": "Optional highlight box 'x,y,w,h' in frame fractions (e.g. '0.55,0.3,0.25,0.2'); when set the leader starts at the box edge",
+    "spotlight": "'true' to dim everything outside the box (default true when box is set)",
+    "accent": "Accent colour for line, dot, box and pill (hex), default #FFD43B",
+    "textColor": "Label text colour; default auto (dark on light accents, white on dark)",
+    "font": "Font family, default Inter",
+    "background": "Solid background used only for opaque .mp4 output, default #0B0B10"
+  },
+  "defaults": {
+    "text": "Click here",
+    "x": 0.62,
+    "y": 0.42,
+    "box": "",
+    "spotlight": "",
+    "accent": "#FFD43B",
+    "textColor": "",
+    "font": "Inter",
+    "background": "#0B0B10"
+  }
+}
