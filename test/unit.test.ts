@@ -195,6 +195,12 @@ describe("captions", () => {
     const dropped = cuesFromTranscript(t, { plan: { keep: [{ start: 1.9, end: 6 }] } });
     expect(dropped[0].text.startsWith("This")).toBe(true);
   });
+  it("keeps a word whose timing spills into a silence cut but is mostly spoken in the kept part", () => {
+    // "readable." 52.76–53.34 with a silence cut from 53.0: 0.24 s kept (41%) is still the spoken word.
+    const s = tr("is@52.4-52.76 readable.@52.76-53.34| Diplomatic@53.54-54.54|", 60);
+    const cues = cuesFromTranscript(s, { plan: { keep: [{ start: 50, end: 53 }, { start: 53.4, end: 60 }] } });
+    expect(cues.map((c) => c.text)).toEqual(["is readable.", "Diplomatic"]);
+  });
   it("formats SRT, VTT and ASS", () => {
     expect(srtTime(3723.456)).toBe("01:02:03,456");
     expect(assTime(3723.456)).toBe("1:02:03.46");
@@ -256,6 +262,49 @@ describe("whisper JSON parsing", () => {
     expect(r.segments[0].words[2]).toMatchObject({ start: 8.04, end: 8.09 });
     expect(r.segments[1].words[0]).toMatchObject({ start: 9.75, end: 10.15 });
   });
+  it("uses DTW token times for word starts when whisper provides them", () => {
+    const json = {
+      transcription: [
+        {
+          offsets: { from: 71000, to: 73400 },
+          text: " Imagine that this",
+          tokens: [
+            { text: " Imagine", offsets: { from: 71000, to: 71510 }, t_dtw: 7234 },
+            { text: " that", offsets: { from: 71800, to: 71810 }, t_dtw: 7258 },
+            { text: " this", offsets: { from: 71960, to: 72090 }, t_dtw: 7278 },
+          ],
+        },
+      ],
+    };
+    const w = parseWhisperJson(json, 80).segments[0].words;
+    expect(w.map((x) => [x.start, x.end])).toEqual([
+      [72.34, 72.58],
+      [72.58, 72.78],
+      [72.78, 72.91],
+    ]);
+  });
+  it("drops a hallucinated repeat that whisper collapsed to zero length", () => {
+    const tok = (text: string, from: number, to: number) => ({ text, offsets: { from, to } });
+    const json = {
+      transcription: [
+        {
+          offsets: { from: 26900, to: 31000 },
+          text: "",
+          tokens: [
+            tok(" Alert", 26900, 26970),
+            tok(" empty", 28040, 29060),
+            tok(" document.", 29060, 30440),
+            tok(" Alert", 31000, 31000),
+            tok(" empty", 31000, 31000),
+            tok(" document.", 31000, 31000),
+            tok(" Empty", 31000, 31120),
+          ],
+        },
+      ],
+    };
+    const words = parseWhisperJson(json, 40).segments[0].words.map((w) => w.text);
+    expect(words).toEqual(["Alert", "empty", "document.", "Empty"]);
+  });
 });
 
 describe("render graph", () => {
@@ -289,5 +338,15 @@ describe("render graph", () => {
     expect(reframeSize(1920, 1080, "1:1")).toEqual({ width: 1080, height: 1080 });
     expect(reframeSize(1080, 1920, "16:9")).toEqual({ width: 1080, height: 606 });
     expect(reframeSize(1281, 721)).toEqual({ width: 1280, height: 720 });
+  });
+  it("forces the libvpx decoder only for VP9 .webm overlays (alpha), not AV1/VP8", () => {
+    const g = buildRenderGraph(plan, info, {
+      overlays: [
+        { path: "/alpha.webm", at: 0, codec: "vp9" },
+        { path: "/broll.webm", at: 1, codec: "av1" },
+      ],
+    });
+    expect(g.inputs[1].args).toEqual(["-c:v", "libvpx-vp9", "-i", "/alpha.webm"]);
+    expect(g.inputs[2].args).toEqual(["-i", "/broll.webm"]);
   });
 });

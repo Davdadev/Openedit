@@ -161,6 +161,8 @@ class FakeMediaPool(object):
         self.current = self.root
         self.append_calls = []
         self.default_media_fps = 25.0
+        self.fail_append = False
+        self.imported_timelines = []
 
     def GetRootFolder(self):
         return self.root
@@ -197,11 +199,34 @@ class FakeMediaPool(object):
         self.project.timelines.append(tl)
         return tl
 
+    def DeleteTimelines(self, timelines):
+        for tl in timelines:
+            if tl in self.project.timelines:
+                self.project.timelines.remove(tl)
+            if self.project.current is tl:
+                self.project.current = None
+        return True
+
+    def ImportTimelineFromFile(self, path, options=None):
+        """Models Resolve's import: a timeline named after options['timelineName']."""
+        options = options or {}
+        if not os.path.isfile(path):
+            return None
+        name = options.get("timelineName") or os.path.splitext(os.path.basename(path))[0]
+        if any(t.name == name for t in self.project.timelines):
+            return None
+        tl = FakeTimeline(name, fps=self.project.fps, start_frame=90000)
+        self.project.timelines.append(tl)
+        self.imported_timelines.append((path, dict(options)))
+        return tl
+
     def AppendToTimeline(self, infos):
         tl = self.project.current
         if tl is None:
             return []
         self.append_calls.append(infos)
+        if self.fail_append:
+            return []
         created = []
         for info in infos:
             if not isinstance(info, dict):

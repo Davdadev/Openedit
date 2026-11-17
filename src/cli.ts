@@ -8,12 +8,16 @@ import { WHISPER_MODELS, modelPath } from "./engine/transcribe.js";
 import { PremiereHost } from "./hosts/premiere.js";
 import { ResolveHost, repoRoot, resolveBridgePath } from "./hosts/resolve.js";
 import { runServer, VERSION } from "./mcp/server.js";
+import { runStudioCli } from "./studio/standalone.js";
+import { keysCommand } from "./media/keys-cli.js";
 
 const HELP = `openedit ${VERSION} — local AI video editing for Claude (MCP)
 
 Usage:
   openedit                 run the MCP server on stdio (what Claude Code launches)
   openedit doctor          check ffmpeg, whisper.cpp, models and editor bridges
+  openedit studio [--port N] [--open]   run OpenEdit Studio (live view) on 127.0.0.1:47822
+  openedit keys [--status]    set up free stock-media API keys (Pexels, Pixabay, ...)
   openedit install-premiere   show how to install the Premiere Pro panel
   openedit install-resolve    show how to install the DaVinci Resolve bridge
   openedit --version
@@ -97,6 +101,12 @@ async function main(): Promise<void> {
       return;
     case "doctor":
       process.exitCode = await doctor();
+      return;
+    case "studio":
+      process.exitCode = await runStudioCli(process.argv.slice(3));
+      return;
+    case "keys":
+      process.exitCode = await keysCommand(process.argv.slice(3));
       return;
     case "install-premiere":
       process.exitCode = installHint("premiere");

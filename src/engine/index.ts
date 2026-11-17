@@ -7,3 +7,5 @@ export * from "./cutplan.js";
 export * from "./remap.js";
 export * from "./captions.js";
 export * from "./render.js";
+export * from "./vad.js";
+export * from "./zooms.js";

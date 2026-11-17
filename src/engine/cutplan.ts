@@ -1,7 +1,17 @@
 import type { Cut, CutPlan, CutReason, TimeRange, Transcript, Word } from "../hosts/types.js";
 import { editDuration } from "./remap.js";
+import { spokenEnd } from "./vad.js";
 
 export const DEFAULT_FILLERS = ["um", "umm", "uh", "uhh", "uhm", "erm", "er", "ah", "ahh", "hmm", "hm", "mm", "mhm"];
+
+export type Tightness = "loose" | "normal" | "tight";
+
+/** Padding / shortest removed pause / shortest kept piece (seconds) per tightness. */
+export const TIGHTNESS: Record<Tightness, { padding: number; minSilence: number; minKeep: number }> = {
+  loose: { padding: 0.15, minSilence: 0.8, minKeep: 0.3 },
+  normal: { padding: 0.08, minSilence: 0.5, minKeep: 0.25 },
+  tight: { padding: 0.04, minSilence: 0.3, minKeep: 0.2 },
+};
 
 export interface CutPlanInput {
   source: string;
@@ -15,6 +25,8 @@ export interface CutPlanInput {
   /** Remove earlier attempts of restarted sentences (needs transcript). */
   removeRetakes?: boolean;
   retakeWindow?: number;
+  /** Preset for padding / minKeep (explicit values win). Default "normal". */
+  tightness?: Tightness;
   /** Seconds of breathing room left around speech at each silence cut. Default 0.08. */
   padding?: number;
   /** Kept pieces shorter than this (s) are dropped. Default 0.25. */
@@ -94,36 +106,72 @@ export function detectFillers(transcript: Transcript, fillerWords: string[] = DE
 export interface RetakeOptions {
   /** Max seconds between the start of the abandoned attempt and the restart. Default 10. */
   window?: number;
-  /** Words that must match at the restart (fewer allowed if the abandoned attempt was shorter). Default 3. */
+  /** Leading words that must match for a full-sentence retake. Default 4. */
   minMatch?: number;
+  /** Longest single retake cut, seconds. Default 15. */
+  maxCut?: number;
   fillerWords?: string[];
 }
 
+export interface Retake {
+  cut: Cut;
+  /** The abandoned attempt (removed). */
+  attempt: string;
+  /** The start of the kept restart. */
+  restart: string;
+  /** How many leading words matched. */
+  matched: number;
+  why: string;
+}
+
+/** Ordered similarity of the first n tokens of two word lists (0..1). */
+export function leadingSimilarity(a: string[], b: string[], n = 5): number {
+  const x = a.slice(0, n);
+  const y = b.slice(0, n);
+  if (!x.length || !y.length) return 0;
+  // LCS on short prefixes.
+  const dp = Array.from({ length: x.length + 1 }, () => new Array<number>(y.length + 1).fill(0));
+  for (let i = 1; i <= x.length; i++)
+    for (let j = 1; j <= y.length; j++)
+      dp[i][j] = x[i - 1] === y[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+  return dp[x.length][y.length] / Math.max(x.length, y.length);
+}
+
 /**
- * Heuristic retake detection: when a phrase is started, abandoned and started
- * again (the same leading words re-appear at a later phrase start within the
- * window), cut the earlier attempt, from its first word to the restart.
+ * Retake detection: a phrase is started, abandoned and started again. To avoid
+ * cutting real content (people repeat sentence openings on purpose), a match needs
+ *  - the same opening at a later phrase start within `window` seconds, with either
+ *    >= minMatch (4) identical leading words, >= 80% similarity of the first 5 words
+ *    (4+ words compared), or an unfinished fragment that is exactly a 2-3 word prefix
+ *    of the restart ("so the — so the plan is");
+ *  - evidence the first attempt was abandoned: it does not end a sentence, or is
+ *    followed by a pause / filler, or is entirely repeated by the restart;
+ *  - a cut no longer than `maxCut` (15 s).
+ * Zero-length (collapsed / hallucinated) words are ignored. The earlier attempt
+ * is cut, from its first word to the restart.
  */
-export function detectRetakes(transcript: Transcript, opts: RetakeOptions = {}): Cut[] {
+export function findRetakes(transcript: Transcript, opts: RetakeOptions = {}): Retake[] {
   const window = opts.window ?? 10;
-  const minMatch = opts.minMatch ?? 3;
+  const minMatch = opts.minMatch ?? 4;
+  const maxCut = opts.maxCut ?? 15;
   const fillers = new Set((opts.fillerWords ?? DEFAULT_FILLERS).map(normalizeWord));
   const words: (Word & { n: string; segStart: boolean })[] = [];
   for (const seg of transcript.segments) {
     seg.words.forEach((w, k) => {
       const n = normalizeWord(w.text);
-      if (n) words.push({ ...w, n, segStart: k === 0 });
+      if (n && w.end - w.start > 0.015) words.push({ ...w, n, segStart: k === 0 });
     });
   }
+  const gapBefore = (i: number) => (i === 0 ? Infinity : words[i].start - spokenEnd(words[i - 1]));
   const isPhraseStart = (i: number): boolean => {
     if (i === 0 || words[i].segStart) return true;
     const prev = words[i - 1];
     if (/[.!?,;:…—-]$/.test(prev.text.trim())) return true;
     if (fillers.has(prev.n)) return true;
-    return words[i].start - prev.end >= 0.35;
+    return gapBefore(i) >= 0.35;
   };
   const starts = words.map((_, i) => i).filter(isPhraseStart);
-  const cuts: Cut[] = [];
+  const out: Retake[] = [];
   let si = 0;
   while (si < starts.length) {
     const i = starts[si];
@@ -131,32 +179,61 @@ export function detectRetakes(transcript: Transcript, opts: RetakeOptions = {}):
       si++;
       continue;
     }
-    let matched = -1;
-    for (let sj = si + 1; sj < starts.length; sj++) {
+    let found: Retake | null = null;
+    let foundSj = -1;
+    for (let sj = si + 1; sj < starts.length && !found; sj++) {
       const j = starts[sj];
       if (words[j].start - words[i].start > window) break;
+      if (fillers.has(words[j].n)) continue;
+      const attemptLen = j - i;
       let m = 0;
       while (i + m < j && j + m < words.length && words[i + m].n === words[j + m].n) m++;
-      if (m >= 2 && m >= Math.min(minMatch, j - i)) {
-        matched = sj;
-        break;
-      }
+      const content = words.slice(i, j).filter((w) => !fillers.has(w.n));
+      const sim = leadingSimilarity(content.map((w) => w.n), words.slice(j, j + 8).filter((w) => !fillers.has(w.n)).map((w) => w.n));
+      const compared = Math.min(5, content.length, words.length - j);
+      let why = "";
+      if (m >= minMatch) why = `${m} leading words repeated`;
+      else if (compared >= 4 && sim >= 0.8) why = `first words ${Math.round(sim * 100)}% similar`;
+      else if (m >= 2 && m === content.length && m <= 3) why = `abandoned "${content.map((w) => w.text).join(" ")}" restarted`;
+      if (!why) continue;
+      const lastAttempt = words[j - 1];
+      const endsSentence = /[.!?]["')\]]*$/.test(lastAttempt.text.trim());
+      const pause = gapBefore(j) >= 0.3 || fillers.has(lastAttempt.n) || /[,…—-]$/.test(lastAttempt.text.trim());
+      const short = attemptLen <= m; // the whole attempt is repeated by the restart
+      if (endsSentence && !pause && !short) continue; // a finished sentence, not an abandoned one
+      // A 2-3 word fragment counts only if it was cut off mid-sentence ("Empty document. Empty document." is deliberate).
+      if (why.startsWith("abandoned") && endsSentence) continue;
+      const cutLen = words[j].start - words[i].start;
+      if (cutLen > maxCut || cutLen <= 0) continue;
+      const attempt = words.slice(i, j).map((w) => w.text).join(" ");
+      const restart = words.slice(j, j + Math.max(m, 6)).map((w) => w.text).join(" ");
+      found = {
+        cut: {
+          start: words[i].start,
+          end: words[j].start,
+          reason: "retake",
+          label: `retake: "${attempt.length > 80 ? `${attempt.slice(0, 77)}...` : attempt}"`,
+        },
+        attempt,
+        restart,
+        matched: m,
+        why,
+      };
+      foundSj = sj;
     }
-    if (matched < 0) {
+    if (!found) {
       si++;
       continue;
     }
-    const j = starts[matched];
-    const attempt = words.slice(i, j).map((w) => w.text).join(" ");
-    cuts.push({
-      start: words[i].start,
-      end: words[j].start,
-      reason: "retake",
-      label: `retake: "${attempt.length > 80 ? `${attempt.slice(0, 77)}...` : attempt}"`,
-    });
-    si = matched;
+    out.push(found);
+    si = foundSj;
   }
-  return cuts;
+  return out;
+}
+
+/** Retake cuts (see findRetakes). */
+export function detectRetakes(transcript: Transcript, opts: RetakeOptions = {}): Cut[] {
+  return findRetakes(transcript, opts).map((r) => r.cut);
 }
 
 /**
@@ -166,8 +243,9 @@ export function detectRetakes(transcript: Transcript, opts: RetakeOptions = {}):
  */
 export function buildCutPlan(input: CutPlanInput): CutPlan {
   const { source, duration } = input;
-  const padding = input.padding ?? 0.08;
-  const minKeep = input.minKeep ?? 0.25;
+  const preset = TIGHTNESS[input.tightness ?? "normal"];
+  const padding = input.padding ?? preset.padding;
+  const minKeep = input.minKeep ?? preset.minKeep;
   const raw: Cut[] = [];
 
   for (const s of input.silences ?? []) {

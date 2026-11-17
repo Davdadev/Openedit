@@ -14,7 +14,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { availableParallelism, cpus, tmpdir, totalmem } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CaptionCue, Word } from "../hosts/types.js";
@@ -240,8 +240,19 @@ function run(cmd: string, args: string[], opts: { cwd?: string; timeoutMs?: numb
   });
 }
 
+/**
+ * Capture workers for HyperFrames. Its "auto" calibration picks few workers for caption
+ * compositions (measured: 86 s auto vs 34 s with 10 workers for 2 min of 9:16 captions on
+ * a 10-core M4), so use one per core, capped by memory (~400 MB per Chrome) and at 10.
+ */
+export function defaultWorkers(): number {
+  const cores = typeof availableParallelism === "function" ? availableParallelism() : cpus().length;
+  const byMem = Math.floor(totalmem() / (400 * 1024 * 1024 * 2));
+  return Math.max(1, Math.min(10, cores, byMem));
+}
+
 /** Render a composed index.html with HyperFrames. */
-async function renderHtml(html: string, output: string, fps: number): Promise<void> {
+async function renderHtml(html: string, output: string, fps: number, opts: { workers?: number | "auto" } = {}): Promise<void> {
   const format = formatFor(output);
   const out = resolve(output);
   mkdirSync(dirname(out), { recursive: true });
@@ -250,6 +261,7 @@ async function renderHtml(html: string, output: string, fps: number): Promise<vo
     writeFileSync(join(work, "index.html"), html);
     const hf = hyperframesCommand();
     const args = [...hf.args, "render", work, "--format", format, "-o", out, "--fps", String(fps), "--quality", "looks", "--quiet"];
+    args.push("--workers", String(opts.workers ?? process.env.OPENEDIT_MOTION_WORKERS ?? defaultWorkers()));
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       HYPERFRAMES_NO_TELEMETRY: "1",

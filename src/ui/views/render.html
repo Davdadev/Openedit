@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenEdit render</title>
+<!--#shared-css-->
+<style>
+  .wrap { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 520px) { .wrap { grid-template-columns: 1fr; } }
+  .thumb {
+    position: relative; border-radius: 12px; overflow: hidden; background: #0d0d0c; aspect-ratio: 16 / 9; display: grid; place-items: center;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 28px rgba(0, 0, 0, 0.22); animation: oe-in 0.6s var(--oe-ease) both;
+  }
+  .thumb.tall { aspect-ratio: auto; height: 300px; }
+  .thumb.alpha { background: repeating-conic-gradient(light-dark(#e7e5df, #2c2b29) 0 25%, light-dark(#f7f6f2, #222120) 0 50%) 0 0 / 18px 18px; }
+  .thumb img { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; display: block; animation: reveal 0.9s var(--oe-ease) both; }
+  .thumb.tall img { width: auto; }
+  @keyframes reveal { from { opacity: 0; transform: scale(1.03); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+  .thumb .dur { position: absolute; right: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px; background: rgba(0, 0, 0, 0.62); color: #fff; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .thumb .res { position: absolute; left: 8px; top: 8px; padding: 2px 7px; border-radius: 6px; background: rgba(0, 0, 0, 0.5); color: #fff; font-size: 10.5px; font-weight: 600; backdrop-filter: blur(6px); }
+  .thumb .none { color: #8b8a84; display: grid; justify-items: center; gap: 8px; font-size: 12px; }
+  .thumb .none svg { width: 30px; height: 30px; }
+
+  .strip { display: flex; gap: 3px; margin-top: 8px; border-radius: 8px; overflow: hidden; }
+  .strip img { flex: 1; min-width: 0; height: 42px; object-fit: cover; display: block; opacity: 0; animation: oe-fade 0.5s var(--oe-ease) forwards; background: #0d0d0c; }
+  .strip.alpha img { background: repeating-conic-gradient(light-dark(#e7e5df, #2c2b29) 0 25%, light-dark(#f7f6f2, #222120) 0 50%) 0 0 / 10px 10px; object-fit: contain; }
+
+  .done { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .done .ok { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--oe-ok); color: #fff; flex: none; animation: pop 0.5s var(--oe-ease) both; }
+  .done .ok.pending { background: var(--color-text-warning); }
+  .done .ok svg { width: 16px; height: 16px; }
+  .done .ok svg path { stroke-dasharray: 20; stroke-dashoffset: 20; animation: draw 0.5s 0.25s var(--oe-ease) forwards; }
+  @keyframes pop { from { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.1); } to { transform: none; opacity: 1; } }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .done h2 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+  .name { font-size: 13px; font-weight: 600; margin: 8px 0 2px; word-break: break-all; }
+  .path { font-size: 11.5px; color: var(--color-text-tertiary); word-break: break-all; line-height: 1.4; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 12px 0; border-radius: var(--border-radius-md); overflow: hidden; background: var(--color-border-tertiary); border: 1px solid var(--color-border-tertiary); }
+  .meta div { background: var(--color-background-primary); padding: 7px 10px; }
+  .meta .k { font-size: 10.5px; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; }
+  .meta .v { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+  .note { margin-top: 10px; font-size: 12px; color: var(--color-text-secondary); display: flex; gap: 6px; align-items: flex-start; }
+  .note.warn { color: var(--color-text-warning); }
+</style>
+</head>
+<body>
+<div id="app" class="oe-card loading-card">
+  <div class="loading-label"><span class="spinner"></span><span id="loading-text">Rendering…</span></div>
+  <div style="display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px">
+    <div class="skeleton" style="aspect-ratio: 16/9"></div>
+    <div><div class="skeleton" style="height: 26px; width: 70%"></div><div class="skeleton" style="height: 14px"></div><div class="skeleton" style="height: 90px"></div></div>
+  </div>
+</div>
+<!--#shared-js-->
+<script>
+(function () {
+  "use strict";
+  var E = OE.esc;
+  var app = document.getElementById("app");
+  var data;
+  var KIND = { render: "Render complete", motion: "Motion graphic rendered", "caption-overlay": "Caption overlay rendered" };
+
+  OE.on("input", function (a) {
+    if (data || !a) return;
+    var name = OE.ctx.toolInfo && OE.ctx.toolInfo.tool && OE.ctx.toolInfo.tool.name;
+    var t = name === "render_motion" ? "Rendering " + (a.template || "motion graphic") + "…" : name === "render_caption_overlay" ? "Rendering animated captions…" : "Rendering " + (a.output ? String(a.output).split("/").pop() : "the edit") + "…";
+    document.getElementById("loading-text").textContent = t;
+  });
+  OE.on("result", function (res) {
+    var sc = res && res.structuredContent;
+    if (res && res.isError || !sc || sc.view !== "render") {
+      app.className = "oe-card";
+      app.innerHTML = '<div class="oe-head"><div class="oe-logo">' + OE.icon("film") + '</div><div class="oe-title">Render</div></div><div class="error-box">' + E(OE.textOf(res) || "No render in this result.") + "</div>";
+      return;
+    }
+    data = sc;
+    render();
+  });
+
+  function resLabel(w, h) {
+    if (!w || !h) return "";
+    var m = Math.min(w, h);
+    var tag = m >= 2160 ? "4K" : m >= 1440 ? "1440p" : m >= 1080 ? "1080p" : m >= 720 ? "720p" : "";
+    var g = function (a, b) { return b ? g(b, a % b) : a; }, d = g(w, h);
+    var ar = w / d + ":" + h / d;
+    if (ar.length > 6) ar = (w / h).toFixed(2) + ":1";
+    return (tag ? tag + " · " : "") + ar;
+  }
+
+  function render() {
+    var d = data;
+    var tall = d.width && d.height && d.height > d.width;
+    var pending = !d.exists;
+    var thumb = d.thumbnail
+      ? '<img alt="Frame from ' + E(d.name) + '" src="' + d.thumbnail + '" />'
+      : '<div class="none">' + OE.icon("film") + (pending ? "Rendering in " + E(d.host || "the editor") : "No preview") + "</div>";
+    var rows = [
+      ["Duration", d.duration != null ? OE.clock(d.duration, 2) : "–"],
+      ["Resolution", d.width ? d.width + "×" + d.height : "–"],
+      ["Frame rate", d.fps ? d.fps + " fps" : "–"],
+      ["Size", d.sizeBytes != null ? OE.bytes(d.sizeBytes) : "–"],
+    ];
+    app.className = "oe-card";
+    app.innerHTML =
+      '<div class="wrap"><div>' +
+      '<div class="thumb' + (tall ? " tall" : "") + (d.alpha ? " alpha" : "") + '">' + thumb +
+      (d.width ? '<span class="res">' + E(resLabel(d.width, d.height)) + "</span>" : "") +
+      (d.duration != null ? '<span class="dur">' + OE.clock(d.duration, 1) + "</span>" : "") + "</div>" +
+      (d.frames && d.frames.length ? '<div class="strip' + (d.alpha ? " alpha" : "") + '">' + d.frames.map(function (f, i) { return '<img alt="" src="' + f + '" style="animation-delay:' + (300 + i * 80) + 'ms" />'; }).join("") + "</div>" : "") +
+      "</div><div>" +
+      '<div class="done"><span class="ok' + (pending ? " pending" : "") + '">' + (pending ? OE.icon("film") : OE.icon("check")) + "</span><h2>" + (pending ? "Export queued" : KIND[d.kind] || "Rendered") + "</h2></div>" +
+      '<div class="name">' + E(d.name) + "</div>" +
+      '<div class="path mono" title="' + E(d.output) + '">' + E(d.output) + "</div>" +
+      '<div class="meta">' + rows.map(function (r) { return '<div><div class="k">' + r[0] + '</div><div class="v">' + E(r[1]) + "</div></div>"; }).join("") + "</div>" +
+      '<div class="acts">' +
+      (d.studioUrl ? '<button class="btn primary" id="studio">' + OE.icon("external") + "Open Studio</button>" : "") +
+      '<button class="btn" id="copy">' + OE.icon("copy") + "Copy path</button></div>" +
+      (d.detail ? '<div class="note">' + OE.icon("spark").replace("<svg", '<svg style="width:13px;height:13px;flex:none;margin-top:2px;color:var(--oe-accent)"') + "<span>" + E(d.detail) + (d.host ? " · " + E(d.host) : "") + "</span></div>" : d.host ? '<div class="note"><span>Rendered with ' + E(d.host) + "</span></div>" : "") +
+      (d.placed ? '<div class="note">' + OE.icon("check").replace("<svg", '<svg style="width:13px;height:13px;flex:none;margin-top:2px;color:var(--oe-ok)"') + "<span>" + E(d.placed.charAt(0).toUpperCase() + d.placed.slice(1)) + "</span></div>" : "") +
+      (d.warnings && d.warnings.length ? '<div class="note warn"><span>' + E(d.warnings.join(" · ")) + "</span></div>" : "") +
+      "</div></div>";
+    var s = document.getElementById("studio");
+    if (s) s.onclick = function () { OE.openLink(d.studioUrl).catch(function () { OE.toast("Open " + d.studioUrl); }); };
+    document.getElementById("copy").onclick = function () { OE.copy(d.output).then(function (ok) { OE.toast(ok ? "Path copied" : d.output); }); };
+    OE.resize();
+  }
+
+  OE.connect({ name: "openedit-render", version: "0.1.0" }).catch(function () {});
+})();
+</script>
+</body>
+</html>

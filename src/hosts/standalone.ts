@@ -1,16 +1,20 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { type CaptionStyle, toASS, toSRT } from "../engine/captions.js";
 import { mediaKind, probe, resolveMediaPath } from "../engine/media.js";
 import { paths } from "../engine/paths.js";
 import { editDuration, editSegments } from "../engine/remap.js";
+import { planReframe, type ReframeMode } from "../engine/reframe.js";
 import {
   type AudioMixSpec,
   type Reframe,
+  type RenderQuality,
   type RenderResult,
   type VideoOverlaySpec,
   type ZoomSpec,
   canBurnAss,
+  hasAlpha,
   reframeSize,
   renderCutPlan,
 } from "../engine/render.js";
@@ -38,6 +42,21 @@ export interface StandalonePlacement extends ClipPlacement {
   loop?: boolean;
   /** Audio: fade out over the last N seconds. */
   fadeOut?: number;
+  /**
+   * Set when the clip is a motion-graphics render: lets the renderer re-render the template at
+   * the output size (e.g. 9:16) instead of cropping a 16:9 graphic.
+   */
+  motion?: MotionSource;
+}
+
+/** How a motion-graphics overlay was made (enough to render it again at another size). */
+export interface MotionSource {
+  template: string;
+  params: Record<string, unknown>;
+  width?: number;
+  height?: number;
+  fps?: number;
+  duration?: number;
 }
 
 export interface StandaloneProject {
@@ -53,6 +72,10 @@ export interface StandaloneProject {
   placements: StandalonePlacement[];
   media: string[];
   lastRender?: string;
+  /** Output aspect of the last render (or set by render): render_motion defaults to it. */
+  outputAspect?: Reframe;
+  /** Motion-graphics files rendered this project, by path, so placements can be re-rendered at the output size. */
+  motionRenders?: Record<string, MotionSource>;
 }
 
 export interface StandaloneRenderOptions {
@@ -60,10 +83,18 @@ export interface StandaloneRenderOptions {
   /** x264 preset (ultrafast … veryslow). */
   preset?: string;
   reframe?: Reframe;
+  /** Reframe placement: auto (follow faces), center, or manual (focusX/focusY). Default auto. */
+  reframeMode?: ReframeMode;
+  focusX?: number;
+  focusY?: number;
   /** Burn the timeline's captions into the picture. Default true when captions exist. */
   burnCaptions?: boolean;
   loudnorm?: boolean;
+  /** draft = fast preview (hardware encode, lighter caption render); final (default) = full quality. */
+  quality?: RenderQuality;
 }
+
+const hash = (v: unknown) => createHash("sha1").update(JSON.stringify(v)).digest("hex").slice(0, 16);
 
 function emptyProject(): StandaloneProject {
   return { version: 1, name: "OpenEdit", markers: [], captions: [], captionStyle: "bold-pop", zooms: [], placements: [], media: [] };
@@ -103,6 +134,29 @@ export class StandaloneHost implements EditorHost {
 
   reset(): void {
     this.project = emptyProject();
+    this.save();
+  }
+
+  /** Output frame size for an aspect (or the source size): what overlays should be rendered at. */
+  outputSize(aspect?: Reframe | null): { width: number; height: number } | undefined {
+    const info = this.project.info;
+    if (!info?.hasVideo) return undefined;
+    const a = aspect === null ? undefined : (aspect ?? this.project.outputAspect);
+    return reframeSize(info.width ?? 1920, info.height ?? 1080, a);
+  }
+
+  /** Remember how a motion-graphics file was made (render_motion), so render can redo it at another size. */
+  registerMotionRender(path: string, source: MotionSource): void {
+    const renders = (this.project.motionRenders ??= {});
+    renders[resolve(path)] = source;
+    // Keep the registry small.
+    const keys = Object.keys(renders);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 50))) delete renders[k];
+    this.save();
+  }
+
+  setOutputAspect(aspect: Reframe | undefined): void {
+    this.project.outputAspect = aspect;
     this.save();
   }
 
@@ -243,7 +297,8 @@ export class StandaloneHost implements EditorHost {
     this.requirePlan();
     for (const c of clips as StandalonePlacement[]) {
       const p = resolveMediaPath(c.path);
-      this.project.placements.push({ ...c, path: p });
+      const motion = c.motion ?? this.project.motionRenders?.[p];
+      this.project.placements.push({ ...c, path: p, ...(motion ? { motion } : {}) });
       if (!this.project.media.includes(p)) this.project.media.push(p);
     }
     this.save();
@@ -279,6 +334,17 @@ export class StandaloneHost implements EditorHost {
     mkdirSync(dirname(output), { recursive: true });
     const warnings: string[] = [];
 
+    const fps = info.fps ?? 30;
+    const outSize = reframeSize(info.width ?? 1920, info.height ?? 1080, opts.reframe);
+    const draft = opts.quality === "draft";
+
+    // Plan the subject-aware crop (face detection) while the graphics render.
+    const cropPromise =
+      opts.reframe && info.hasVideo
+        ? planReframe(plan, info, { aspect: opts.reframe, mode: opts.reframeMode, focusX: opts.focusX, focusY: opts.focusY })
+        : Promise.resolve(undefined);
+    cropPromise.catch(() => undefined);
+
     const overlays: VideoOverlaySpec[] = [];
     const audio: AudioMixSpec[] = [];
     for (const c of [...p.placements].sort((a, b) => (a.track ?? 2) - (b.track ?? 2))) {
@@ -293,9 +359,15 @@ export class StandaloneHost implements EditorHost {
           loop: c.loop,
           fadeOut: c.fadeOut,
         });
-      } else {
-        overlays.push({ path: c.path, at: c.at, sourceIn: c.sourceIn, sourceOut: c.sourceOut, duration: c.duration });
+        continue;
       }
+      const spec: VideoOverlaySpec = { path: c.path, at: c.at, sourceIn: c.sourceIn, sourceOut: c.sourceOut, duration: c.duration };
+      if (info.hasVideo) {
+        const fitted = await this.fitOverlay(c, outSize, fps, warnings);
+        spec.path = fitted.path;
+        spec.fit = fitted.fit;
+      }
+      overlays.push(spec);
     }
 
     let burnCaptions: string | undefined;
@@ -307,24 +379,30 @@ export class StandaloneHost implements EditorHost {
       writeFileSync(srt, toSRT(p.captions));
     }
     if (wantCaptions) {
-      const size = reframeSize(info.width ?? 1920, info.height ?? 1080, opts.reframe);
+      const size = outSize;
       const stem = join(paths.renders(), `${basename(output, extname(output))}-${Date.now()}`);
       // Primary: animated caption overlay from the motion module (ProRes 4444 alpha),
-      // composited with ffmpeg's overlay filter. Fallback: libass burn-in when available.
+      // composited with ffmpeg's overlay filter, cached by content so re-renders are free.
+      // Draft renders the overlay at a lower frame rate. Fallback: libass burn-in when available.
+      const capFps = draft ? Math.min(15, Math.round(fps)) : fps;
+      const cached = join(paths.renders(), `captions-${hash({ c: p.captions, s: p.captionStyle, ...size, capFps })}.mov`);
       let overlayError: string | undefined;
-      try {
-        const motion = await loadMotion();
-        const r = await motion.renderCaptionOverlay({
-          cues: p.captions,
-          style: p.captionStyle,
-          output: `${stem}-captions.mov`,
-          width: size.width,
-          height: size.height,
-          fps: info.fps ?? 30,
-        });
-        captionOverlay = r.output;
-      } catch (e) {
-        overlayError = (e as Error).message.split("\n")[0];
+      if (existsSync(cached)) captionOverlay = cached;
+      else {
+        try {
+          const motion = await loadMotion();
+          const r = await motion.renderCaptionOverlay({
+            cues: p.captions,
+            style: p.captionStyle,
+            output: cached,
+            width: size.width,
+            height: size.height,
+            fps: capFps,
+          });
+          captionOverlay = r.output;
+        } catch (e) {
+          overlayError = (e as Error).message.split("\n")[0];
+        }
       }
       if (!captionOverlay) {
         if (await canBurnAss()) {
@@ -340,18 +418,77 @@ export class StandaloneHost implements EditorHost {
       }
     }
 
+    const crop = await cropPromise.catch(() => undefined);
     const result = await renderCutPlan(plan, output, {
       zooms: p.zooms,
       overlays,
       audio,
       reframe: opts.reframe,
+      reframeMode: opts.reframeMode,
+      focusX: opts.focusX,
+      focusY: opts.focusY,
+      crop,
       loudnorm: opts.loudnorm,
       burnCaptions,
       captionOverlay,
       preset: opts.preset,
+      quality: opts.quality,
     });
+    if (crop) {
+      result.reframe = { mode: crop.mode, coverage: crop.coverage, note: crop.note, keys: crop.keys.length };
+      if (crop.note) warnings.push(`reframe: ${crop.note}`);
+    }
+    p.outputAspect = opts.reframe;
     p.lastRender = result.output;
     this.save();
     return { ...result, warnings, srt };
+  }
+
+  /**
+   * Make an overlay suit the output frame. Motion graphics are re-rendered at the output size
+   * (cached), so a left/right lower third stays inside a 9:16 frame. Other transparent graphics
+   * made for another aspect are fitted inside the frame ("contain"); opaque b-roll fills it ("cover").
+   */
+  private async fitOverlay(
+    c: StandalonePlacement,
+    out: { width: number; height: number },
+    fps: number,
+    warnings: string[],
+  ): Promise<{ path: string; fit: VideoOverlaySpec["fit"] }> {
+    if (mediaKind(c.path) === "image") return { path: c.path, fit: (await hasAlpha(c.path)) ? "contain" : "cover" };
+    let size: { width?: number; height?: number } = {};
+    try {
+      size = await probe(c.path);
+    } catch {
+      /* unreadable: let ffmpeg report it */
+    }
+    const sameSize = size.width === out.width && size.height === out.height;
+    if (sameSize) return { path: c.path, fit: "cover" };
+    if (c.motion) {
+      const m = c.motion;
+      const target = join(
+        paths.renders(),
+        `${m.template}-${hash({ t: m.template, p: m.params, d: m.duration, f: m.fps ?? fps })}-${out.width}x${out.height}.mov`,
+      );
+      if (existsSync(target)) return { path: target, fit: "cover" };
+      try {
+        const motion = await loadMotion();
+        const r = await motion.renderTemplate({
+          template: m.template,
+          params: m.params,
+          output: target,
+          width: out.width,
+          height: out.height,
+          fps: m.fps ?? fps,
+          duration: m.duration,
+        });
+        return { path: r.output, fit: "cover" };
+      } catch (e) {
+        warnings.push(`Could not re-render ${m.template} at ${out.width}x${out.height} (${(e as Error).message.split("\n")[0]}); fitted the original.`);
+      }
+    }
+    const sameAspect = size.width && size.height && Math.abs(size.width / size.height - out.width / out.height) < 0.01;
+    if (sameAspect) return { path: c.path, fit: "cover" };
+    return { path: c.path, fit: (await hasAlpha(c.path)) ? "contain" : "cover" };
   }
 }

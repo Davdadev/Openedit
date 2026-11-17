@@ -3,3 +3,9 @@ dist/
 *.log
 .DS_Store
 test/.tmp/
+.env
+.env.*
+!.env.example
+test-results/
+playwright-report/
+__pycache__/

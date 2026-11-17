@@ -178,6 +178,34 @@ class CommandTest(TempDirTest):
         self.assertEqual(v["track"], 1)
         self.assertEqual(tl["markers"], [{"time": 5.0, "name": "Intro", "color": "red", "comment": "hello"}])
 
+    def test_apply_cut_plan_falls_back_to_timeline_import(self):
+        src = self.touch("talk.mp4")
+        xml = self.touch("talk.xml")
+        bridge, resolve = make_bridge()
+        pool = resolve.project.media_pool
+        pool.fail_append = True
+        plan = {"source": src, "duration": 20.0, "keep": [{"start": 0.0, "end": 2.0}], "cuts": []}
+        r = call(bridge, "applyCutPlan", {"plan": plan, "sequenceName": "Edit", "xmlPath": xml})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["result"]["sequence"], "Edit")
+        self.assertEqual(r["result"]["method"], "importTimeline")
+        self.assertIn("warning", r["result"])
+        self.assertEqual(pool.imported_timelines[0][0], xml)
+        self.assertEqual(pool.imported_timelines[0][1]["timelineName"], "Edit")
+        # The empty timeline made before the failed append is gone; only the imported one has the name.
+        names = [t.name for t in resolve.project.timelines]
+        self.assertEqual(names.count("Edit"), 1)
+        self.assertEqual(resolve.project.current.name, "Edit")
+
+    def test_apply_cut_plan_without_xml_reports_append_failure(self):
+        src = self.touch("talk.mp4")
+        bridge, resolve = make_bridge()
+        resolve.project.media_pool.fail_append = True
+        plan = {"source": src, "duration": 20.0, "keep": [{"start": 0.0, "end": 2.0}], "cuts": []}
+        r = call(bridge, "applyCutPlan", {"plan": plan})
+        self.assertFalse(r["ok"])
+        self.assertIn("AppendToTimeline added nothing", r["error"])
+
     def test_get_source_media(self):
         bridge, _ = make_bridge()
         self.assertEqual(call(bridge, "getSourceMedia")["result"], ["/media/interview.mov"])

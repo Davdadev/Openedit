@@ -7,6 +7,7 @@ import { paths } from "./paths.js";
 
 interface FfprobeStream {
   codec_type?: string;
+  codec_name?: string;
   width?: number;
   height?: number;
   r_frame_rate?: string;
@@ -61,6 +62,7 @@ export async function probe(path: string): Promise<MediaInfo> {
     info.width = video.width;
     info.height = video.height;
     info.fps = parseRate(video.avg_frame_rate) ?? parseRate(video.r_frame_rate);
+    if (video.codec_name) info.videoCodec = video.codec_name;
   }
   return info;
 }

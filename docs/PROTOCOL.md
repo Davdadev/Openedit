@@ -7,7 +7,7 @@ through one of three hosts:
 |-------------|----------------------------------------------------------------------------|
 | standalone  | In-process. ffmpeg renders the edit straight to a file. No editor needed. |
 | premiere    | HTTP `POST http://127.0.0.1:47821/rpc` to the OpenEdit CEP panel, which runs ExtendScript via `CSInterface.evalScript`. |
-| resolve     | Spawns `python3 resolve/openedit_bridge.py`, writes ONE JSON request line to stdin, reads ONE JSON response line from stdout. Uses Resolve's `DaVinciResolveScript` API. |
+| resolve     | Keeps one `python3 resolve/openedit_bridge.py --serve` process: newline-delimited JSON requests on stdin, responses on stdout matched by `id`. Falls back to one process per command (ONE request line in, ONE response line out). Uses Resolve Studio's `DaVinciResolveScript` API. |
 
 ## Wire format (both bridges)
 
@@ -38,7 +38,7 @@ All times are seconds (float). Types are in `src/hosts/types.ts`.
 | `status`         | `{}`                                         | `HostStatus`                             |
 | `getTimeline`    | `{}`                                         | `TimelineInfo` (active sequence)         |
 | `getSourceMedia` | `{}`                                         | `string[]` absolute media paths used in the active sequence, video first |
-| `applyCutPlan`   | `{ plan: CutPlan, sequenceName?: string }`   | `{ sequence: string }` — builds a NEW sequence containing only `plan.keep` ranges of `plan.source`, back to back, video + audio linked. Never modifies the original. |
+| `applyCutPlan`   | `{ plan: CutPlan, sequenceName?: string, xmlPath?: string }` | `{ sequence: string }` — builds a NEW sequence containing only `plan.keep` ranges of `plan.source`, back to back, video + audio linked. Never modifies the original. Resolve: `xmlPath` is an FCP7 XML of the same edit, imported with `ImportTimelineFromFile` if `AppendToTimeline` fails. |
 | `addMarkers`     | `{ markers: Marker[] }`                      | number added (sequence markers)          |
 | `importMedia`    | `{ paths: string[] }`                        | number imported into the project bin "OpenEdit" |
 | `placeClips`     | `{ clips: ClipPlacement[] }`                 | number placed (overwrite edit; create tracks on top if `track` exceeds count) |
@@ -47,3 +47,9 @@ All times are seconds (float). Types are in `src/hosts/types.ts`.
 | `render`         | `{ output: string, preset?: string }`        | `{ output }`                             |
 
 Unsupported commands return `ok:false` with error starting `unsupported:`.
+
+## Without a bridge
+
+`export_timeline {planId, format}` writes the edit as FCP7 XML (`xmeml` v5), FCPXML 1.10, CMX 3600 EDL
+or SRT (`src/engine/interchange.ts`). Edit points are snapped to source frames, NTSC rates use the
+ntsc flag / rational frame durations / drop-frame timecode, and audio is linked to video.

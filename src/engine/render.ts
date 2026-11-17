@@ -4,9 +4,22 @@ import { dirname, extname, join, resolve } from "node:path";
 import type { CutPlan, MediaInfo, Zoom } from "../hosts/types.js";
 import { run } from "./exec.js";
 import { mediaKind, probe, resolveMediaPath } from "./media.js";
+import { cropSize, planReframe, type ReframeMode, type ReframePlan } from "./reframe.js";
 import { editDuration } from "./remap.js";
 
 export type Reframe = "9:16" | "1:1" | "16:9" | "4:5";
+export type RenderQuality = "draft" | "final";
+
+/** Measured loudness from loudnorm's first pass (print_format=json). */
+export interface LoudnormStats {
+  input_i: string;
+  input_tp: string;
+  input_lra: string;
+  input_thresh: string;
+  target_offset: string;
+}
+
+export const LOUDNORM_TARGET = { I: -14, TP: -1.5, LRA: 11 };
 
 /** A zoom with an optional ease (seconds to ramp in/out; 0 = hard punch-in). */
 export interface ZoomSpec extends Zoom {
@@ -21,8 +34,13 @@ export interface VideoOverlaySpec {
   sourceOut?: number;
   /** Required for still images; defaults to 3 s. */
   duration?: number;
-  /** "cover" fills the frame (b-roll), "none" keeps its own size, centred. Default "cover". */
-  fit?: "cover" | "none";
+  /**
+   * "cover" fills the output frame (b-roll), "contain" fits the whole overlay inside it (graphics made
+   * for another aspect), "none" keeps its own size, centred. Default "cover".
+   */
+  fit?: "cover" | "contain" | "none";
+  /** Video codec of the overlay (filled in by renderCutPlan). Only VP9 .webm needs the libvpx decoder for alpha. */
+  codec?: string;
 }
 
 /** An audio file mixed under the edit (music, SFX). Times are edit time. */
@@ -48,8 +66,22 @@ export interface RenderOptions {
   /** Alternative to burnCaptions: a pre-rendered transparent caption video laid over the final frame. */
   captionOverlay?: string;
   reframe?: Reframe;
-  /** EBU R128 loudness normalisation to -14 LUFS (social media standard). */
+  /** How to place the reframe crop: follow faces (auto, default), centre, or a manual focus point. */
+  reframeMode?: ReframeMode;
+  /** Horizontal focus 0..1 for manual mode, and the auto fallback when no face is found. */
+  focusX?: number;
+  /** Vertical focus 0..1 (vertical source cropped to a wider aspect). */
+  focusY?: number;
+  /** Resolved crop (filled in by renderCutPlan from reframe/reframeMode). x/y may be expressions of t. */
+  crop?: Pick<ReframePlan, "width" | "height" | "x" | "y">;
+  /** EBU R128 loudness normalisation to -14 LUFS / -1.5 dBTP (social media standard). */
   loudnorm?: boolean;
+  /** Measured values from a first loudnorm pass: the second pass then applies a linear gain. */
+  loudnormStats?: LoudnormStats;
+  /** Make-up gain (dB) for the limiter path, measured by renderCutPlan so integrated loudness lands on target. */
+  loudnormTrimDb?: number;
+  /** "draft": hardware encode + single-pass loudnorm for fast previews. "final" (default): x264 + two-pass loudnorm. */
+  quality?: RenderQuality;
   zooms?: ZoomSpec[];
   overlays?: VideoOverlaySpec[];
   audio?: AudioMixSpec[];
@@ -66,6 +98,12 @@ export interface RenderResult {
   duration: number;
   width?: number;
   height?: number;
+  /** How the reframe crop was placed (faces / manual / center) and why. */
+  reframe?: { mode: string; coverage?: number; note?: string; keys?: number };
+  /** Measured loudness of the first pass, when two-pass loudnorm ran. */
+  loudness?: { measuredI: number; measuredTP: number };
+  encoder?: string;
+  seconds?: number;
 }
 
 let filterCache: Set<string> | null = null;
@@ -96,13 +134,9 @@ export async function canBurnAss(): Promise<boolean> {
 const n3 = (n: number) => (Math.round(n * 1000) / 1000).toString();
 const even = (n: number) => Math.max(2, Math.floor(n / 2) * 2);
 
-/** Output frame size after an aspect-ratio crop (centre crop, no upscaling). */
+/** Output frame size after an aspect-ratio crop (no upscaling). */
 export function reframeSize(width: number, height: number, reframe?: Reframe): { width: number; height: number } {
-  if (!reframe) return { width: even(width), height: even(height) };
-  const [a, b] = reframe.split(":").map(Number);
-  const r = a / b;
-  if (width / height > r) return { width: even(height * r), height: even(height) };
-  return { width: even(width), height: even(width / r) };
+  return cropSize(width, height, reframe);
 }
 
 /** Escape a path for use as a filter option value inside a filtergraph. */
@@ -175,18 +209,31 @@ export function buildRenderGraph(
     lines.push(`[${vLabel}]scale=${W}:${H},setsar=1[vbase]`);
     vLabel = "vbase";
 
-    // 2. Zooms (punch-ins) on the main camera.
+    // 2. Reframe the CAMERA first (subject-aware crop), so every layer below is
+    //    composited at the output size and nothing placed left/right gets cropped away.
+    const size = opts.crop ? { width: opts.crop.width, height: opts.crop.height } : reframeSize(W, H, opts.reframe);
+    if (opts.reframe || opts.crop) {
+      const x = opts.crop?.x ?? `(iw-${size.width})/2`;
+      const y = opts.crop?.y ?? `(ih-${size.height})/2`;
+      lines.push(`[${vLabel}]crop=${size.width}:${size.height}:x='${x}':y='${y}'[vref]`);
+      vLabel = "vref";
+    }
+    const OW = size.width;
+    const OH = size.height;
+    outSize = size;
+
+    // 3. Zooms (punch-ins) on the reframed camera, centred on the (already subject-centred) crop.
     if (opts.zooms?.length) {
       const z = zoomExpression(opts.zooms);
       if (z !== "1") {
         lines.push(
-          `[${vLabel}]zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=${n3(fps)}[vzoom]`,
+          `[${vLabel}]zoompan=z='${z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${OW}x${OH}:fps=${n3(fps)}[vzoom]`,
         );
         vLabel = "vzoom";
       }
     }
 
-    // 3. B-roll / graphics overlays.
+    // 4. B-roll / graphics overlays, at output size.
     (opts.overlays ?? []).forEach((o, k) => {
       const idx = inputs.length;
       const kind = mediaKind(o.path);
@@ -201,14 +248,19 @@ export function buildRenderGraph(
       else {
         if (o.sourceIn) args.push("-ss", n3(o.sourceIn));
         if (span) args.push("-t", n3(span));
-        if (extname(o.path).toLowerCase() === ".webm") args.push("-c:v", "libvpx-vp9");
+        // ffmpeg's native VP9 decoder drops alpha; libvpx keeps it. Forcing libvpx on
+        // a non-VP9 .webm (AV1, VP8) makes the input undecodable, so only do it for VP9.
+        if (extname(o.path).toLowerCase() === ".webm" && (o.codec ?? "vp9") === "vp9") args.push("-c:v", "libvpx-vp9");
       }
       args.push("-i", resolve(o.path));
       inputs.push({ args });
+      const mode = o.fit ?? "cover";
       const fit =
-        (o.fit ?? "cover") === "cover"
-          ? `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},`
-          : "";
+        mode === "cover"
+          ? `scale=${OW}:${OH}:force_original_aspect_ratio=increase,crop=${OW}:${OH},`
+          : mode === "contain"
+            ? `scale=${OW}:${OH}:force_original_aspect_ratio=decrease,`
+            : "";
       const end = span ? `${n3(o.at + span)}` : n3(total);
       lines.push(`[${idx}:v:0]${fit}setsar=1,format=yuva420p,setpts=PTS-STARTPTS+${n3(o.at)}/TB[ov${k}]`);
       lines.push(
@@ -216,14 +268,6 @@ export function buildRenderGraph(
       );
       vLabel = `vov${k}`;
     });
-
-    // 4. Reframe for vertical / square delivery.
-    const size = reframeSize(W, H, opts.reframe);
-    if (opts.reframe) {
-      lines.push(`[${vLabel}]crop=${size.width}:${size.height}:(iw-${size.width})/2:(ih-${size.height})/2[vref]`);
-      vLabel = "vref";
-    }
-    outSize = size;
 
     // 5. Captions, on top of everything at final size.
     if (opts.burnCaptions) {
@@ -235,7 +279,7 @@ export function buildRenderGraph(
       if (extname(opts.captionOverlay).toLowerCase() === ".webm") args.push("-c:v", "libvpx-vp9");
       args.push("-i", resolve(opts.captionOverlay));
       inputs.push({ args });
-      lines.push(`[${idx}:v:0]scale=${size.width}:${size.height},format=yuva420p[capov]`);
+      lines.push(`[${idx}:v:0]scale=${OW}:${OH},format=yuva420p[capov]`);
       lines.push(`[${vLabel}][capov]overlay=0:0:eof_action=pass[vcap]`);
       vLabel = "vcap";
     }
@@ -293,7 +337,7 @@ export function buildRenderGraph(
   }
 
   if (aLabel) {
-    const post = opts.loudnorm ? "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000" : "aresample=48000";
+    const post = opts.loudnorm ? `${loudnormFilter(opts.loudnormStats, opts.loudnormTrimDb)},aresample=48000` : "aresample=48000";
     lines.push(`[${aLabel}]${post}[aout]`);
     aLabel = "aout";
   }
@@ -304,9 +348,87 @@ export function buildRenderGraph(
   return { inputs, graph: lines.join(";\n"), maps, outSize, duration: total };
 }
 
-function encodeArgs(hasVideo: boolean, hasAudio: boolean, opts: { crf?: number; preset?: string }): string[] {
+/** Headroom kept below the true-peak target for the AAC encoder's overshoot (dB). */
+export const TP_CODEC_MARGIN = 1;
+
+/**
+ * Loudness filter chain.
+ *  - no stats: single-pass (dynamic) loudnorm.
+ *  - stats, and a plain gain keeps true peak under target: loudnorm second pass, linear=true.
+ *  - stats, but the gain would push peaks over: the same linear gain followed by a 4x-oversampled
+ *    limiter (an approximate true-peak limiter), instead of letting loudnorm silently switch to its
+ *    dynamic mode (which overshoots the ceiling after AAC encoding).
+ */
+export function loudnormFilter(stats?: LoudnormStats, trimDb = 0): string {
+  const { I, TP, LRA } = LOUDNORM_TARGET;
+  const base = `loudnorm=I=${I}:TP=${TP}:LRA=${LRA}`;
+  if (!stats) return base;
+  const gain = I - Number(stats.input_i);
+  const ceiling = TP - TP_CODEC_MARGIN;
+  if (Number(stats.input_tp) + gain <= ceiling) {
+    return (
+      `loudnorm=I=${I}:TP=${ceiling}:LRA=${Math.max(LRA, Math.ceil(Number(stats.input_lra)) + 1)}` +
+      `:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}` +
+      `:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`
+    );
+  }
+  const limit = Math.pow(10, ceiling / 20);
+  return `volume=${n3(gain + trimDb)}dB,aresample=192000,alimiter=limit=${n3(limit)}:attack=2:release=60:level=false,aresample=48000`;
+}
+
+/** Pull the JSON block loudnorm prints (print_format=json) out of ffmpeg's stderr. */
+export function parseLoudnormJson(stderr: string): LoudnormStats | null {
+  const start = stderr.lastIndexOf("{");
+  const end = stderr.lastIndexOf("}");
+  if (start < 0 || end < start) return null;
+  try {
+    const j = JSON.parse(stderr.slice(start, end + 1)) as Record<string, string>;
+    const keys = ["input_i", "input_tp", "input_lra", "input_thresh", "target_offset"] as const;
+    if (!keys.every((k) => j[k] !== undefined && Number.isFinite(Number(j[k])))) return null;
+    return { input_i: j.input_i, input_tp: j.input_tp, input_lra: j.input_lra, input_thresh: j.input_thresh, target_offset: j.target_offset };
+  } catch {
+    return null;
+  }
+}
+
+let encoderCache: Set<string> | null = null;
+/** Names of the encoders compiled into the local ffmpeg. */
+export async function ffmpegEncoders(): Promise<Set<string>> {
+  if (encoderCache) return encoderCache;
+  try {
+    const { stdout } = await run("ffmpeg", ["-hide_banner", "-encoders"]);
+    encoderCache = new Set(
+      stdout
+        .split("\n")
+        .map((l) => /^\s*[VAS][.A-Z]{5}\s+(\S+)\s/.exec(l)?.[1])
+        .filter((x): x is string => Boolean(x)),
+    );
+  } catch {
+    encoderCache = new Set();
+  }
+  return encoderCache;
+}
+
+/**
+ * Video/audio encoder arguments. final: libx264 (CRF 20, preset veryfast unless given).
+ * draft: the hardware H.264 encoder when present (VideoToolbox on macOS), else x264 ultrafast.
+ */
+export function encodeArgs(
+  hasVideo: boolean,
+  hasAudio: boolean,
+  opts: { crf?: number; preset?: string; quality?: RenderQuality },
+  hw: { videotoolbox?: boolean } = {},
+): string[] {
   const args: string[] = [];
-  if (hasVideo) args.push("-c:v", "libx264", "-preset", opts.preset ?? "veryfast", "-crf", String(opts.crf ?? 20));
+  if (hasVideo) {
+    if (opts.quality === "draft" && hw.videotoolbox) {
+      args.push("-c:v", "h264_videotoolbox", "-q:v", "55", "-allow_sw", "1", "-realtime", "0", "-pix_fmt", "yuv420p");
+    } else if (opts.quality === "draft") {
+      args.push("-c:v", "libx264", "-preset", opts.preset ?? "ultrafast", "-crf", String(opts.crf ?? 24));
+    } else {
+      args.push("-c:v", "libx264", "-preset", opts.preset ?? "veryfast", "-crf", String(opts.crf ?? 20));
+    }
+  }
   if (hasAudio) args.push("-c:a", "aac", "-b:a", "192k");
   args.push("-movflags", "+faststart");
   return args;
@@ -319,15 +441,16 @@ async function runGraph(
   output: string,
   encode: string[],
   timeoutMs: number,
-): Promise<void> {
-  mkdirSync(dirname(output), { recursive: true });
-  const script = join(tmpdir(), `openedit-graph-${process.pid}-${Date.now()}.txt`);
+  loglevel = "error",
+): Promise<{ stderr: string }> {
+  if (output !== "-") mkdirSync(dirname(output), { recursive: true });
+  const script = join(tmpdir(), `openedit-graph-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
   writeFileSync(script, graph);
   try {
-    await run(
+    const r = await run(
       "ffmpeg",
       [
-        "-hide_banner", "-loglevel", "error", "-y",
+        "-hide_banner", "-nostats", "-loglevel", loglevel, "-y",
         ...inputs.flatMap((i) => i.args),
         "-/filter_complex", script,
         ...maps,
@@ -336,17 +459,35 @@ async function runGraph(
       ],
       { timeoutMs },
     );
+    return { stderr: r.stderr };
   } finally {
     rmSync(script, { force: true });
   }
 }
 
 /**
+ * First loudnorm pass: run only the audio half of the graph (cuts, fades,
+ * music, ducking) into loudnorm's analyser. Video is never decoded.
+ */
+export async function measureLoudness(plan: CutPlan, info: MediaInfo, opts: RenderOptions): Promise<LoudnormStats | null> {
+  if (!info.hasAudio && !opts.audio?.length) return null;
+  const audioOnly: MediaInfo = { ...info, hasVideo: false };
+  // With opts.loudnorm unset this measures the raw mix; with stats set it measures the processed chain.
+  const { inputs, graph } = buildRenderGraph(plan, audioOnly, { ...opts, overlays: [], captionOverlay: undefined, burnCaptions: undefined });
+  const g = graph.replace(/aresample=48000\[aout\]$/, "aresample=48000,loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json[aout]");
+  const timeout = Math.max(10 * 60_000, info.duration * 1000 * 5);
+  const { stderr } = await runGraph(inputs, g, ["-map", "[aout]"], "-", ["-f", "null"], timeout, "info");
+  return parseLoudnormJson(stderr);
+}
+
+/**
  * Render a cut plan to a file in one ffmpeg pass: trim/concat of the kept
  * ranges (with ~10 ms audio fades at every join so cuts never click), then
- * zooms, overlays, reframe, captions, music and loudness normalisation.
+ * subject-aware reframe, zooms, overlays, captions, music and loudness
+ * normalisation (two-pass, linear, for final quality).
  */
 export async function renderCutPlan(plan: CutPlan, output: string, opts: RenderOptions = {}): Promise<RenderResult> {
+  const t0 = Date.now();
   const info = await probe(plan.source);
   const out = resolve(output);
   let assCopy: string | undefined;
@@ -366,11 +507,47 @@ export async function renderCutPlan(plan: CutPlan, output: string, opts: RenderO
     copyFileSync(resolveMediaPath(o.burnCaptions), assCopy);
     o.burnCaptions = assCopy;
   }
+  if (o.overlays?.length) {
+    o.overlays = await Promise.all(
+      o.overlays.map(async (ov) =>
+        extname(ov.path).toLowerCase() === ".webm" && !ov.codec ? { ...ov, codec: (await probe(ov.path)).videoCodec } : ov,
+      ),
+    );
+  }
+  let reframeInfo: RenderResult["reframe"];
+  if (o.reframe && !o.crop && info.hasVideo) {
+    const rp = await planReframe(plan, info, { aspect: o.reframe, mode: o.reframeMode, focusX: o.focusX, focusY: o.focusY });
+    o.crop = rp;
+    reframeInfo = { mode: rp.mode, coverage: rp.coverage, note: rp.note, keys: rp.keys.length };
+  }
+  let loudness: RenderResult["loudness"];
+  if (o.loudnorm && !o.loudnormStats && o.quality !== "draft") {
+    const stats = await measureLoudness(plan, info, { ...o, loudnorm: false }).catch(() => null);
+    if (stats) {
+      o.loudnormStats = stats;
+      loudness = { measuredI: Number(stats.input_i), measuredTP: Number(stats.input_tp) };
+      // Limiter path: the limiter shaves a little loudness off the peaks; measure once more and make it up.
+      if (loudnormFilter(stats).startsWith("volume=")) {
+        const after = await measureLoudness(plan, info, o).catch(() => null);
+        const trim = after ? LOUDNORM_TARGET.I - Number(after.input_i) : 0;
+        if (Number.isFinite(trim) && Math.abs(trim) < 3) o.loudnormTrimDb = trim;
+      }
+    }
+  }
+  const hw = o.quality === "draft" ? { videotoolbox: (await ffmpegEncoders()).has("h264_videotoolbox") } : {};
   try {
     const { inputs, graph, maps, outSize, duration } = buildRenderGraph(plan, info, o);
     const timeout = Math.max(10 * 60_000, info.duration * 1000 * 10);
-    await runGraph(inputs, graph, maps, out, encodeArgs(info.hasVideo, info.hasAudio, o), timeout);
-    return { output: out, duration, ...(outSize ?? {}) };
+    const encode = encodeArgs(info.hasVideo, info.hasAudio || Boolean(o.audio?.length), o, hw);
+    try {
+      await runGraph(inputs, graph, maps, out, encode, timeout);
+    } catch (e) {
+      // Hardware encoders can refuse odd sizes or be busy: retry once in software.
+      if (!encode.includes("h264_videotoolbox")) throw e;
+      await runGraph(inputs, graph, maps, out, encodeArgs(info.hasVideo, info.hasAudio || Boolean(o.audio?.length), o, {}), timeout);
+    }
+    const encoder = encode[encode.indexOf("-c:v") + 1];
+    return { output: out, duration, ...(outSize ?? {}), reframe: reframeInfo, loudness, encoder, seconds: (Date.now() - t0) / 1000 };
   } finally {
     if (assCopy) rmSync(assCopy, { force: true });
   }
@@ -411,4 +588,20 @@ export async function mixMusic(
     ],
     edgeFade: 0,
   });
+}
+
+/** True when the first video stream carries an alpha channel (ProRes 4444, VP9 alpha, PNG/RGBA…). */
+export async function hasAlpha(path: string): Promise<boolean> {
+  try {
+    const { stdout } = await run("ffprobe", [
+      "-v", "error", "-select_streams", "v:0",
+      "-show_entries", "stream=pix_fmt:stream_tags=alpha_mode", "-of", "json", resolveMediaPath(path),
+    ], { timeoutMs: 30_000 });
+    const s = (JSON.parse(stdout) as { streams?: { pix_fmt?: string; tags?: { alpha_mode?: string } }[] }).streams?.[0];
+    if (!s) return false;
+    if (s.tags?.alpha_mode === "1") return true;
+    return /^(yuva|rgba|argb|bgra|abgr|gbrap|ya|pal8)/.test(s.pix_fmt ?? "");
+  } catch {
+    return false;
+  }
 }

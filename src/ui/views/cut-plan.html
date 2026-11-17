@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenEdit cut plan</title>
+<!--#shared-css-->
+<style>
+  .stats { display: flex; align-items: flex-end; gap: 18px; margin: 2px 0 14px; flex-wrap: wrap; }
+  .dur { display: flex; align-items: baseline; gap: 10px; }
+  .dur .big { font-size: 27px; font-weight: 650; letter-spacing: -0.02em; line-height: 1; }
+  .dur .from { color: var(--color-text-tertiary); font-size: 18px; font-weight: 500; text-decoration: line-through; text-decoration-thickness: 1.5px; text-decoration-color: color-mix(in srgb, var(--color-text-tertiary) 60%, transparent); }
+  .dur .arrow { color: var(--color-text-tertiary); font-size: 16px; transform: translateY(-2px); }
+  .saved {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: var(--border-radius-full);
+    background: var(--oe-accent-soft); color: var(--oe-accent); font-weight: 600; font-size: 12.5px;
+  }
+  .saved svg { width: 14px; height: 14px; }
+  .stat-kv { display: flex; gap: 16px; margin-left: auto; }
+  .kv { text-align: right; }
+  .kv .k { font-size: 11px; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; }
+  .kv .v { font-size: 15px; font-weight: 600; }
+
+  .tl { position: relative; height: 92px; border-radius: var(--border-radius-md); background: var(--color-background-secondary); overflow: hidden; cursor: crosshair; }
+  .tl canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .cut {
+    position: absolute; top: 0; bottom: 0; cursor: pointer; border-top: 2px solid var(--c);
+    background: color-mix(in srgb, var(--c) 13%, transparent); transition: background 0.15s, opacity 0.25s, border-color 0.2s;
+    transform-origin: top; animation: cut-in 0.5s var(--oe-ease) both;
+  }
+  @keyframes cut-in { from { opacity: 0; transform: scaleY(0.2); } to { opacity: 1; transform: none; } }
+  .cut::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c) 22%, transparent) 0 2px, transparent 2px 6px); opacity: 0.6; }
+  .cut:hover, .cut.hl { background: color-mix(in srgb, var(--c) 26%, transparent); }
+  .cut.restored { border-top-style: dashed; background: transparent; border-color: color-mix(in srgb, var(--c) 55%, transparent); }
+  .cut.restored::after { opacity: 0; }
+  .cut.dim { opacity: 0.25; }
+  .cursor-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--color-text-primary); opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+  .cursor-time { position: absolute; top: 4px; transform: translateX(-50%); font-size: 10.5px; padding: 1px 5px; border-radius: 4px; background: var(--color-text-primary); color: var(--color-background-primary); pointer-events: none; opacity: 0; transition: opacity 0.15s; white-space: nowrap; }
+  .tl:hover .cursor-line { opacity: 0.35; }
+  .tl:hover .cursor-time { opacity: 1; }
+
+  .ruler { position: relative; height: 16px; margin-top: 3px; font-size: 10.5px; color: var(--color-text-tertiary); }
+  .ruler span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+  .ruler span:first-child { transform: none; }
+  .ruler span:last-child { transform: translateX(-100%); }
+
+  .after { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .after .lbl { font-size: 11px; color: var(--color-text-tertiary); width: 34px; flex: none; text-transform: uppercase; letter-spacing: 0.06em; }
+  .after .track { flex: 1; height: 10px; position: relative; }
+  .after .bar { position: absolute; left: 0; top: 0; bottom: 0; display: flex; gap: 1px; width: 100%; transition: width 1.1s var(--oe-ease); border-radius: 5px; overflow: hidden; }
+  .after .bar i { display: block; height: 100%; background: var(--oe-accent); opacity: 0.85; }
+  .after .bar i:nth-child(even) { opacity: 0.62; }
+  .after .end { font-size: 11.5px; font-weight: 600; flex: none; }
+
+  .legend { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 10px; }
+  .legend .chip { cursor: default; transition: background 0.15s, border-color 0.15s; }
+  .legend .chip:hover { border-color: var(--color-border-primary); }
+  .legend .chip.off { opacity: 0.45; }
+
+  .list { max-height: 148px; border: 1px solid var(--color-border-tertiary); border-radius: var(--border-radius-md); }
+  .row {
+    display: grid; grid-template-columns: 3px 112px 44px 1fr auto; align-items: center; gap: 10px; padding: 6px 10px 6px 0;
+    border-bottom: 1px solid var(--color-border-tertiary); cursor: pointer; transition: background 0.12s, opacity 0.2s; font-size: 12.5px;
+    animation: oe-fade 0.4s both;
+  }
+  .row:last-child { border-bottom: none; }
+  .row:hover, .row.hl { background: var(--color-background-secondary); }
+  .row .bar { align-self: stretch; background: var(--c); border-radius: 0 2px 2px 0; }
+  .row .when { color: var(--color-text-secondary); font-size: 12px; }
+  .row .len { color: var(--color-text-tertiary); font-size: 12px; text-align: right; }
+  .row .what { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .what .r { color: var(--c); font-weight: 600; margin-right: 6px; text-transform: capitalize; }
+  .row .what q { color: var(--color-text-secondary); quotes: "\201C" "\201D"; }
+  .row.restored .what, .row.restored .when, .row.restored .len { text-decoration: line-through; opacity: 0.55; }
+  .tog { width: 28px; height: 16px; border-radius: 10px; background: var(--c); position: relative; transition: background 0.2s; flex: none; border: 0; padding: 0; cursor: pointer; }
+  .tog::after { content: ""; position: absolute; top: 2px; left: 14px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left 0.22s var(--oe-ease); box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .row.restored .tog { background: var(--color-border-primary); }
+  .row.restored .tog::after { left: 2px; }
+  .empty { padding: 16px; text-align: center; color: var(--color-text-tertiary); font-size: 12.5px; }
+
+  .foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .foot .status { font-size: 12px; color: var(--color-text-secondary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .foot .status b { color: var(--color-text-primary); }
+  .applied {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--border-radius-md); margin-top: 12px;
+    background: color-mix(in srgb, var(--oe-ok) 10%, transparent); border: 1px solid color-mix(in srgb, var(--oe-ok) 28%, transparent);
+    font-size: 12.5px; animation: oe-in 0.5s var(--oe-ease) both;
+  }
+  .applied .ok { width: 22px; height: 22px; border-radius: 50%; background: var(--oe-ok); color: #fff; display: grid; place-items: center; flex: none; }
+  .applied .ok svg { width: 14px; height: 14px; stroke-dasharray: 20; stroke-dashoffset: 20; animation: draw 0.5s 0.2s var(--oe-ease) forwards; }
+  .applied .ok svg path { stroke-dasharray: 20; stroke-dashoffset: 20; animation: draw 0.5s 0.15s var(--oe-ease) forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .applied .path { color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+</style>
+</head>
+<body>
+<div id="app" class="oe-card loading-card">
+  <div class="loading-label"><span class="spinner"></span><span id="loading-text">Planning cuts…</span></div>
+  <div class="skeleton" style="height: 30px; width: 46%"></div>
+  <div class="skeleton" style="height: 92px"></div>
+  <div class="skeleton" style="height: 22px; width: 70%"></div>
+</div>
+<div class="tip" id="tip"></div>
+<!--#shared-js-->
+<script>
+(function () {
+  "use strict";
+  var E = OE.esc, clock = OE.clock;
+  var REASONS = { silence: "Silence", filler: "Filler", retake: "Retake", manual: "Manual" };
+  var data = null;
+  var restored = new Set();
+  var hidden = new Set();
+  var busy = false;
+  var app = document.getElementById("app");
+  var tip = document.getElementById("tip");
+  var probe = document.createElement("span");
+  probe.style.display = "none";
+  document.body.appendChild(probe);
+
+  function color(v) {
+    probe.style.color = "var(" + v + ")";
+    return getComputedStyle(probe).color;
+  }
+  function cutColor(r) { return "var(--oe-" + (REASONS[r] ? r : "manual") + ")"; }
+  function pendingSeconds() {
+    var s = 0;
+    restored.forEach(function (i) { var c = data.cuts[i]; if (c) s += c.end - c.start; });
+    return s;
+  }
+
+  OE.on("input", function (args) {
+    if (data) return;
+    var name = OE.ctx.toolInfo && OE.ctx.toolInfo.tool && OE.ctx.toolInfo.tool.name;
+    var t = name === "apply_cuts" ? "Applying cuts…" : name === "show_plan" ? "Loading plan…" : "Planning cuts" + (args && args.path ? " for " + String(args.path).split("/").pop() : "") + "…";
+    document.getElementById("loading-text").textContent = t;
+  });
+  OE.on("cancelled", function () {
+    if (!data) app.innerHTML = '<div class="error-box">Cancelled.</div>';
+  });
+  OE.on("result", function (res) {
+    var sc = res && res.structuredContent;
+    if (res && res.isError || !sc || sc.view !== "cut-plan") {
+      renderError(OE.textOf(res) || "No cut plan in this result.");
+      return;
+    }
+    setData(sc, false);
+  });
+
+  function renderError(msg) {
+    app.className = "oe-card";
+    app.innerHTML = '<div class="oe-head"><div class="oe-logo">' + OE.icon("scissors") + '</div><div class="oe-title">Cut plan</div></div><div class="error-box">' + E(msg) + "</div>";
+  }
+
+  function setData(sc, revised) {
+    data = sc;
+    restored = new Set();
+    render(revised);
+  }
+
+  function render(revised) {
+    var d = data;
+    app.className = "oe-card";
+    var counts = d.cutsByReason || {};
+    var legend = Object.keys(REASONS).filter(function (r) { return counts[r] && counts[r].count; }).map(function (r) {
+      return '<span class="chip' + (hidden.has(r) ? " off" : "") + '" data-reason="' + r + '" style="--c:' + cutColor(r) + '"><span class="dot" style="color:var(--c)"></span>' +
+        REASONS[r] + ' <b class="num">' + counts[r].count + '</b><span class="faint num">' + OE.dur(counts[r].seconds) + "</span></span>";
+    }).join("");
+    var rows = d.cuts.map(function (c, i) {
+      var q = c.text ? "<q>" + E(c.text) + "</q>" : c.label ? "<q>" + E(c.label) + "</q>" : '<span class="faint">' + (c.reason === "silence" ? "dead air" : "") + "</span>";
+      return '<div class="row" data-i="' + i + '" style="--c:' + cutColor(c.reason) + ';animation-delay:' + Math.min(i * 18, 400) + 'ms">' +
+        '<span class="bar"></span><span class="when num">' + clock(c.start) + " – " + clock(c.end) + '</span><span class="len num">' + (c.end - c.start).toFixed(1) + "s</span>" +
+        '<span class="what"><span class="r">' + E(REASONS[c.reason] || c.reason) + "</span>" + q + "</span>" +
+        '<button class="tog" title="Toggle this cut" aria-label="Toggle cut ' + (i + 1) + '"></button></div>';
+    }).join("");
+    app.innerHTML =
+      '<div class="oe-head"><div class="oe-logo">' + OE.icon("scissors") + '</div><div class="oe-title">Cut plan</div>' +
+      '<div class="oe-sub" title="' + E(d.source) + '">' + E(d.sourceName) + '</div><div class="oe-spacer"></div>' +
+      (d.revisedFrom ? '<span class="chip">revised</span>' : "") + '<span class="chip mono" title="planId">' + E(d.planId) + "</span></div>" +
+      '<div class="stats"><div><div class="dur"><span class="from num" id="from">' + clock(d.duration) + '</span><span class="arrow">→</span><span class="big num" id="to">' + clock(d.editedDuration) + "</span></div></div>" +
+      '<span class="saved" id="saved"><span class="num" id="saved-text"></span></span>' +
+      '<div class="stat-kv"><div class="kv"><div class="k">Cuts</div><div class="v num">' + d.cuts.length + '</div></div><div class="kv"><div class="k">Kept</div><div class="v num">' + d.keptSegments + "</div></div></div></div>" +
+      '<div class="tl" id="tl"><canvas id="wave"></canvas><div id="cuts"></div><div class="cursor-line" id="cl"></div><div class="cursor-time mono" id="ct"></div></div>' +
+      '<div class="ruler mono" id="ruler"></div>' +
+      '<div class="after"><span class="lbl">After</span><div class="track"><div class="bar" id="after"></div></div><span class="end num" id="after-end">' + clock(d.editedDuration) + "</span></div>" +
+      '<div class="legend" id="legend">' + legend + "</div>" +
+      '<div class="list scroll" id="list">' + (rows || '<div class="empty">Nothing to cut — the source is already tight.</div>') + "</div>" +
+      (d.applied ? appliedHtml(d.applied) : "") +
+      '<div class="foot"><span class="status" id="status"></span><div class="oe-spacer"></div>' +
+      '<button class="btn ghost sm hidden" id="reset">' + OE.icon("undo") + "Reset</button>" +
+      '<button class="btn hidden" id="update">Update plan</button>' +
+      '<button class="btn primary" id="apply"' + (d.applied ? " disabled" : "") + ">" + (d.applied ? OE.icon("check") + "Applied" : OE.icon("scissors") + "Apply cuts") + "</button></div>";
+
+    // cut overlays
+    var host = document.getElementById("cuts");
+    host.innerHTML = d.cuts.map(function (c, i) {
+      var l = (c.start / d.duration) * 100, w = Math.max(0.25, ((c.end - c.start) / d.duration) * 100);
+      return '<div class="cut" data-i="' + i + '" style="left:' + l + "%;width:" + w + "%;--c:" + cutColor(c.reason) + ";animation-delay:" + (120 + Math.min(i * 12, 500)) + 'ms"></div>';
+    }).join("");
+    // ruler
+    var ticks = 6, html = "";
+    for (var t = 0; t <= ticks; t++) html += '<span style="left:' + (t / ticks) * 100 + '%">' + clock((d.duration * t) / ticks, 0) + "</span>";
+    document.getElementById("ruler").innerHTML = html;
+    // after bar: kept pieces packed end to end at the original scale
+    var after = document.getElementById("after");
+    after.innerHTML = d.keep.map(function (k) { return '<i style="flex:' + Math.max(0.0001, k.end - k.start) + '"></i>'; }).join("");
+    after.style.width = "100%";
+    requestAnimationFrame(function () { requestAnimationFrame(updateTotals); });
+
+    wire();
+    drawWave();
+    OE.resize();
+  }
+
+  function appliedHtml(a) {
+    return '<div class="applied"><span class="ok">' + OE.icon("check") + '</span><div style="min-width:0"><div><b>Applied in ' + E(a.host) + "</b>" +
+      (a.sequence ? ' · new sequence <b>' + E(a.sequence) + "</b>" : "") + "</div>" +
+      (a.output ? '<div class="path mono" title="' + E(a.output) + '">' + E(a.output) + "</div>" : '<div class="path">Original untouched — render or keep editing.</div>') + "</div></div>";
+  }
+
+  function updateTotals() {
+    var d = data, extra = pendingSeconds();
+    var edited = d.editedDuration + extra;
+    var saved = d.duration - edited;
+    document.getElementById("to").textContent = clock(edited);
+    document.getElementById("after-end").textContent = clock(edited);
+    document.getElementById("saved-text").textContent = "Saves " + OE.dur(saved) + " · " + (d.duration ? Math.round((saved / d.duration) * 1000) / 10 : 0) + "% shorter";
+    document.getElementById("after").style.width = (d.duration ? (edited / d.duration) * 100 : 100) + "%";
+    var n = restored.size;
+    var st = document.getElementById("status");
+    if (n) st.innerHTML = "<b>" + n + " cut" + (n > 1 ? "s" : "") + "</b> restored · +" + OE.dur(extra) + " kept";
+    else if (data.applied) st.textContent = "";
+    else st.innerHTML = "Click a cut to keep that part" + (OE.canCallTools() ? "" : " · changes are sent to Claude");
+    document.getElementById("reset").classList.toggle("hidden", !n);
+    document.getElementById("update").classList.toggle("hidden", !n || !!data.applied);
+    var apply = document.getElementById("apply");
+    if (!data.applied) apply.innerHTML = OE.icon("scissors") + (n ? "Update &amp; apply" : "Apply cuts");
+  }
+
+  function setHL(i, on) {
+    document.querySelectorAll('[data-i="' + i + '"]').forEach(function (el) { el.classList.toggle("hl", on); });
+  }
+  function toggle(i) {
+    if (data.applied || busy) return;
+    if (restored.has(i)) restored.delete(i); else restored.add(i);
+    var on = restored.has(i);
+    document.querySelectorAll('[data-i="' + i + '"]').forEach(function (el) { el.classList.toggle("restored", on); });
+    updateTotals();
+    drawWave();
+  }
+
+  function wire() {
+    var tl = document.getElementById("tl");
+    tl.addEventListener("mousemove", function (ev) {
+      var r = tl.getBoundingClientRect();
+      var x = Math.max(0, Math.min(r.width, ev.clientX - r.left));
+      document.getElementById("cl").style.left = x + "px";
+      var ct = document.getElementById("ct");
+      ct.style.left = Math.max(24, Math.min(r.width - 24, x)) + "px";
+      ct.textContent = clock((x / r.width) * data.duration);
+    });
+    document.querySelectorAll(".cut, .row").forEach(function (el) {
+      var i = Number(el.dataset.i);
+      el.addEventListener("mouseenter", function (ev) { setHL(i, true); if (el.classList.contains("cut")) showTip(i, ev); });
+      el.addEventListener("mousemove", function (ev) { if (el.classList.contains("cut")) placeTip(ev); });
+      el.addEventListener("mouseleave", function () { setHL(i, false); hideTip(); });
+      el.addEventListener("click", function () { toggle(i); });
+    });
+    document.querySelectorAll(".legend .chip").forEach(function (chip) {
+      var r = chip.dataset.reason;
+      chip.addEventListener("mouseenter", function () {
+        document.querySelectorAll(".cut").forEach(function (el) { el.classList.toggle("dim", data.cuts[el.dataset.i].reason !== r); });
+      });
+      chip.addEventListener("mouseleave", function () { document.querySelectorAll(".cut").forEach(function (el) { el.classList.remove("dim"); }); });
+    });
+    document.getElementById("reset").onclick = function () {
+      restored.forEach(function (i) { document.querySelectorAll('[data-i="' + i + '"]').forEach(function (el) { el.classList.remove("restored"); }); });
+      restored.clear();
+      updateTotals();
+      drawWave();
+    };
+    document.getElementById("update").onclick = function () { revise(false); };
+    document.getElementById("apply").onclick = function () { restored.size ? revise(true) : apply(); };
+  }
+
+  function showTip(i, ev) {
+    var c = data.cuts[i];
+    tip.innerHTML = '<div class="tip-h"><span class="dot" style="color:' + cutColor(c.reason) + '"></span>' + E(REASONS[c.reason] || c.reason) +
+      '<span class="faint mono" style="font-weight:400;margin-left:auto">' + (c.end - c.start).toFixed(2) + "s</span></div>" +
+      '<div class="mono muted">' + clock(c.start, 2) + " → " + clock(c.end, 2) + "</div>" +
+      (c.text ? "<q>" + E(c.text) + "</q>" : c.label ? "<q>" + E(c.label) + "</q>" : "") +
+      '<div class="faint" style="margin-top:6px;font-size:11px">' + (data.applied ? "Already applied" : restored.has(i) ? "Click to cut again" : "Click to keep this part") + "</div>";
+    tip.classList.add("show");
+    placeTip(ev);
+  }
+  function placeTip(ev) {
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    var x = Math.min(window.innerWidth - w - 8, Math.max(8, ev.clientX - w / 2));
+    var y = ev.clientY - h - 14;
+    if (y < 6) y = ev.clientY + 18;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  }
+  function hideTip() { tip.classList.remove("show"); }
+
+  // ---- waveform ----
+  function pseudoPeaks(n) {
+    // Deterministic stand-in when the server could not compute peaks: speech-like in kept ranges, quiet in silences.
+    var out = [], seed = 7;
+    for (var i = 0; i < n; i++) {
+      seed = (seed * 9301 + 49297) % 233280;
+      var t = (i / n) * data.duration;
+      var inSil = data.cuts.some(function (c) { return c.reason === "silence" && t >= c.start && t <= c.end; });
+      var r = seed / 233280;
+      out.push(inSil ? 0.04 + r * 0.06 : 0.25 + 0.6 * Math.abs(Math.sin(i * 0.37) * 0.6 + r * 0.5));
+    }
+    return out;
+  }
+  function drawWave() {
+    var cv = document.getElementById("wave");
+    if (!cv || !data) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth, h = cv.clientHeight;
+    if (!w) return;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    var g = cv.getContext("2d");
+    g.scale(dpr, dpr);
+    var peaks = data.waveform && data.waveform.length ? data.waveform : pseudoPeaks(400);
+    var accent = color("--oe-accent");
+    var cols = {};
+    Object.keys(REASONS).forEach(function (r) { cols[r] = color("--oe-" + r); });
+    var step = 3, bw = 2, mid = h / 2 + 4;
+    var cuts = data.cuts;
+    var ci = 0;
+    for (var x = 0; x < w; x += step) {
+      var t = ((x + bw / 2) / w) * data.duration;
+      var pi = Math.min(peaks.length - 1, Math.floor((x / w) * peaks.length));
+      var p = Math.max(0.03, peaks[pi]);
+      while (ci < cuts.length && cuts[ci].end < t) ci++;
+      var c = cuts[ci] && t >= cuts[ci].start && t <= cuts[ci].end ? cuts[ci] : null;
+      var bh = Math.max(2, p * (h - 22));
+      if (c && !restored.has(ci)) {
+        g.globalAlpha = 0.5;
+        g.fillStyle = cols[c.reason] || accent;
+      } else {
+        g.globalAlpha = c ? 0.55 : 0.92;
+        g.fillStyle = accent;
+      }
+      roundRect(g, x, mid - bh / 2, bw, bh, 1);
+    }
+    g.globalAlpha = 1;
+  }
+  function roundRect(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.fill();
+  }
+  var rt;
+  window.addEventListener("resize", function () { clearTimeout(rt); rt = setTimeout(drawWave, 60); });
+  OE.on("context", function () { setTimeout(drawWave, 0); });
+
+  // ---- actions ----
+  function setBusy(btn, label) {
+    busy = true;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>' + label;
+  }
+  function fail(e) {
+    busy = false;
+    OE.toast(e && e.message ? e.message : "Something went wrong");
+    updateTotals();
+    document.getElementById("apply").disabled = !!data.applied;
+    document.getElementById("update").disabled = false;
+  }
+  function revise(thenApply) {
+    var idx = Array.from(restored).sort(function (a, b) { return a - b; });
+    if (!OE.canCallTools()) {
+      var nums = idx.map(function (i) { return "#" + (i + 1) + " (" + clock(data.cuts[i].start) + "–" + clock(data.cuts[i].end) + ")"; }).join(", ");
+      OE.sendMessage("In cut plan " + data.planId + ", keep these parts instead of cutting them: " + nums + ". Use revise_plan with restore " + JSON.stringify(idx) + (thenApply ? ", then apply the new plan." : ", then show me the result."))
+        .then(function () { OE.toast("Sent to Claude"); }, fail);
+      return;
+    }
+    var btn = document.getElementById(thenApply ? "apply" : "update");
+    setBusy(btn, "Updating…");
+    OE.callTool("revise_plan", { planId: data.planId, restore: idx }).then(function (res) {
+      busy = false;
+      var sc = res.structuredContent;
+      if (!sc || sc.view !== "cut-plan") throw new Error("Unexpected response");
+      setData(sc, true);
+      OE.updateContext("The user revised the cut plan in the OpenEdit view. Current planId: " + sc.planId + " (" + clock(sc.duration) + " → " + clock(sc.editedDuration) + ", " + sc.cuts.length + " cuts). Use this planId from now on.", { planId: sc.planId });
+      OE.toast("Plan updated");
+      if (thenApply) apply();
+    }).catch(fail);
+  }
+  function apply() {
+    if (!OE.canCallTools()) {
+      OE.sendMessage("Apply cut plan " + data.planId + ".").then(function () { OE.toast("Sent to Claude"); }, fail);
+      return;
+    }
+    setBusy(document.getElementById("apply"), "Applying…");
+    OE.callTool("apply_cuts", { planId: data.planId }).then(function (res) {
+      busy = false;
+      var sc = res.structuredContent;
+      if (sc && sc.view === "cut-plan") setData(sc, false);
+      else { data.applied = { host: "editor" }; render(); }
+      OE.updateContext("The user applied cut plan " + data.planId + " from the OpenEdit view" + (data.applied && data.applied.sequence ? " (new sequence " + data.applied.sequence + ")" : "") + ".", { planId: data.planId, applied: true });
+      OE.toast("Cuts applied");
+    }).catch(fail);
+  }
+
+  OE.connect({ name: "openedit-cut-plan", version: "0.1.0" }).catch(function () {});
+})();
+</script>
+</body>
+</html>

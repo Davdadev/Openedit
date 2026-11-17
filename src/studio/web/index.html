@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>OpenEdit Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff8a5b'/%3E%3Cstop offset='1' stop-color='%238b7bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M11 9l13 7-13 7z' fill='white'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="studio.css" />
+</head>
+<body class="idle">
+  <div class="backdrop" aria-hidden="true">
+    <div class="aurora a1"></div>
+    <div class="aurora a2"></div>
+    <div class="aurora a3"></div>
+    <div class="grain"></div>
+  </div>
+
+  <!-- Glowing viewport border while Claude works -->
+  <div id="glow" aria-hidden="true">
+    <div class="glow-soft"><div class="glow-ring wide"></div></div>
+    <div class="glow-ring sharp"></div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8a5b"/><stop offset=".55" stop-color="#ff5fa2"/><stop offset="1" stop-color="#8b7bff"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M8 10.5h7M8 16h11M8 21.5h6" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><path d="M20 19.5l5-3.5-5-3.5z" fill="#fff"/></svg>
+      </span>
+      <span class="brand-name">OpenEdit</span><span class="brand-sub">Studio</span>
+    </div>
+    <div class="topbar-right">
+      <span class="session" id="session"></span>
+      <span class="conn" id="conn" data-state="connecting"><span class="dot"></span><span id="conn-text">Connecting</span></span>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="hero">
+      <div class="eyebrow"><span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span id="hero-eyebrow">Standing by</span></div>
+      <h1 id="hero-title">Waiting for Claude</h1>
+      <p id="hero-detail">Ask Claude to edit a video, for example <q>cut the silences and ums in ~/Videos/talk.mp4, add bold captions</q>. Everything it does shows up here, live.</p>
+      <div class="hero-chips">
+        <div class="source-chip" id="source-chip" hidden>
+          <span class="chip-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="14" rx="3"/><path d="M17 10l4-2.5v9L17 14z"/></svg></span>
+          <span class="chip-text"><small>Source</small><b id="source-name">—</b></span>
+        </div>
+        <div class="stat-chip" id="stat-saved" hidden></div>
+      </div>
+    </section>
+
+    <section class="card timeline-card" id="timeline">
+      <div class="card-head">
+        <h2><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18M3 12h18M3 17h18"/></svg>Timeline</h2>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="tl-empty" id="tl-empty">
+        <div class="ghost-lanes" aria-hidden="true"><i></i><i></i><i></i></div>
+        <p>The cut plan, captions, zooms and placed clips appear here as Claude builds them.</p>
+      </div>
+      <div class="tl-body" id="tl-body" hidden>
+        <div class="tl-group">
+          <div class="lane-label">Source<small id="src-dur"></small></div>
+          <div class="lane-wrap">
+            <div class="ruler" id="ruler-src"></div>
+            <div class="lane-track source" id="lane-source"><canvas id="wave"></canvas><div class="segs" id="segs-source"></div></div>
+          </div>
+        </div>
+        <div class="tl-group edit-group">
+          <div class="lane-label">Edit<small id="edit-dur"></small></div>
+          <div class="lane-wrap">
+            <div class="ruler" id="ruler-edit"></div>
+            <div class="lane-track edit" id="lane-edit"><div class="edit-flex" id="segs-edit"></div><span class="lane-badge" id="edit-badge">Preview</span></div>
+          </div>
+        </div>
+        <div class="edit-lanes" id="edit-lanes">
+          <div class="tl-group">
+            <div class="lane-label">Captions<small id="cap-count"></small></div>
+            <div class="lane-wrap"><div class="lane-track thin" id="lane-captions"></div></div>
+          </div>
+          <div class="tl-group">
+            <div class="lane-label">Zooms<small id="zoom-count"></small></div>
+            <div class="lane-wrap"><div class="lane-track thin" id="lane-zooms"></div></div>
+          </div>
+          <div id="clip-lanes"></div>
+          <div class="range-hi" id="range-hi" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card media-card-wrap" id="media">
+      <div class="card-head">
+        <h2><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="8" height="7" rx="2"/><rect x="13" y="4" width="8" height="7" rx="2"/><rect x="3" y="13" width="8" height="7" rx="2"/><rect x="13" y="13" width="8" height="7" rx="2"/></svg>Media &amp; outputs</h2>
+        <span class="count" id="media-count"></span>
+      </div>
+      <div class="media-grid" id="media-grid"></div>
+      <p class="media-empty" id="media-empty">Downloaded stock media, renders, captions and other files Claude produces land here with previews and license badges.</p>
+    </section>
+
+    <section class="card log-card" id="activity">
+      <div class="card-head"><h2><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h13"/></svg>Activity</h2></div>
+      <ol class="log" id="log"></ol>
+    </section>
+  </main>
+
+  <aside id="status" class="glass" aria-live="polite">
+    <div class="st-head">
+      <span class="st-state" id="st-state"><span class="pulse"></span><span id="st-state-text">Idle</span></span>
+      <span class="st-elapsed" id="st-elapsed">00:00</span>
+    </div>
+    <div class="st-now">
+      <div class="st-title" id="st-title">Nothing running</div>
+      <div class="st-tool"><code id="st-tool">—</code><span id="st-args"></span></div>
+    </div>
+    <div class="progress" id="progress" data-mode="idle">
+      <div class="bar"><div class="fill" id="progress-fill"></div><div class="shimmer"></div></div>
+      <div class="progress-meta"><span id="progress-detail">Ready</span><span id="progress-pct"></span></div>
+    </div>
+    <div class="st-stats">
+      <div><b id="stat-steps">0</b><small>steps</small></div>
+      <div><b id="stat-outputs">0</b><small>outputs</small></div>
+      <div><b id="stat-time">0s</b><small>tool time</small></div>
+    </div>
+    <div class="st-history-head">Steps</div>
+    <ol class="history" id="history"><li class="history-empty">No steps yet</li></ol>
+  </aside>
+
+  <!-- The Claude cursor -->
+  <div id="cursor" aria-hidden="true" data-target="">
+    <div class="cursor-spot" id="cursor-spot"></div>
+    <div class="cursor-ring" id="cursor-ring"></div>
+    <div class="cursor-pointer" id="cursor-pointer">
+      <svg viewBox="0 0 28 28"><defs><linearGradient id="cg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb08a"/><stop offset="1" stop-color="#ff5fa2"/></linearGradient></defs><path d="M4 3l18 9.2-7.6 1.9L11 22z" fill="url(#cg)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      <span class="cursor-label" id="cursor-label">Claude</span>
+    </div>
+  </div>
+
+  <script type="module" src="studio.js"></script>
+</body>
+</html>

@@ -32,6 +32,8 @@ export interface MediaInfo {
   width?: number;
   height?: number;
   fps?: number;
+  /** ffprobe codec_name of the main video stream, e.g. "h264", "vp9", "av1". */
+  videoCodec?: string;
   hasAudio: boolean;
   hasVideo: boolean;
 }

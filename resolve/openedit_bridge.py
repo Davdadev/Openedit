@@ -461,6 +461,8 @@ class ResolveBridge(object):
         except Exception as exc:  # noqa: BLE001 - every failure becomes JSON
             import traceback
             traceback.print_exc(file=sys.stderr)
+            # In --serve mode the process outlives Resolve sessions: reconnect next time.
+            self._resolve = None
             return {"id": rid, "ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
 
     # ---- media pool helpers ----------------------------------------------
@@ -556,6 +558,14 @@ class ResolveBridge(object):
         except Exception:  # noqa: BLE001
             pass
         pm = resolve.GetProjectManager()
+        if pm is None and self._resolve is not None:
+            # A cached handle from a Resolve session that has since quit: reconnect once.
+            self._resolve = None
+            try:
+                resolve = self.resolve
+                pm = resolve.GetProjectManager()
+            except Exception as exc:  # noqa: BLE001
+                return {"host": "resolve", "connected": False, "detail": str(exc)}
         project = pm.GetCurrentProject() if pm else None
         if project is None:
             status["detail"] = "No project open"
@@ -714,9 +724,17 @@ class ResolveBridge(object):
         project.SetCurrentTimeline(tl)
 
         append = [{k: v for k, v in info.items() if not k.startswith("_")} for info in infos]
-        items = media_pool.AppendToTimeline(append) or []
+        append_error = None
+        try:
+            items = media_pool.AppendToTimeline(append) or []
+        except Exception as exc:  # noqa: BLE001
+            items, append_error = [], "%s: %s" % (type(exc).__name__, exc)
         if not items:
-            raise BridgeError("AppendToTimeline added nothing to %r (source fps %.3f)" % (name, source_fps))
+            why = append_error or "AppendToTimeline added nothing to %r (source fps %.3f)" % (name, source_fps)
+            imported = self._import_timeline_fallback(project, media_pool, tl, name, args.get("xmlPath"), why)
+            if imported is not None:
+                return imported
+            raise BridgeError(why)
         result = {"sequence": name, "clips": len(infos)}
         # Sanity-check endFrame semantics against what Resolve actually built.
         try:
@@ -732,6 +750,41 @@ class ResolveBridge(object):
         except Exception:  # noqa: BLE001
             pass
         return result
+
+    def _import_timeline_fallback(self, project, media_pool, empty_tl, name, xml_path, why):
+        """When AppendToTimeline fails, build the timeline from the interchange XML the
+        server wrote (FCP7 xmeml) with MediaPool.ImportTimelineFromFile. Returns a result
+        dict, or None when no XML was given or the import failed too."""
+        if not xml_path or not os.path.isfile(xml_path) or not _has(media_pool, "ImportTimelineFromFile"):
+            return None
+        log("AppendToTimeline failed (%s); importing %s" % (why, xml_path))
+        # The empty timeline holds the name: remove it so the import can take it.
+        try:
+            if empty_tl is not None and _has(media_pool, "DeleteTimelines"):
+                media_pool.DeleteTimelines([empty_tl])
+        except Exception:  # noqa: BLE001
+            pass
+        tl = None
+        for options in ({"timelineName": name, "importSourceClips": True}, {"timelineName": name}):
+            try:
+                tl = media_pool.ImportTimelineFromFile(xml_path, options)
+            except Exception as exc:  # noqa: BLE001
+                log("ImportTimelineFromFile failed:", exc)
+                tl = None
+            if tl:
+                break
+        if not tl:
+            return None
+        try:
+            project.SetCurrentTimeline(tl)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            actual = tl.GetName()
+        except Exception:  # noqa: BLE001
+            actual = name
+        return {"sequence": actual, "method": "importTimeline", "file": xml_path,
+                "warning": "AppendToTimeline failed (%s); built the timeline from %s instead" % (why, os.path.basename(xml_path))}
 
     @staticmethod
     def _is_video_item(item):
@@ -1046,9 +1099,14 @@ def _parse_line(line):
 
 def _needs_relay(bridge, request):
     """True when fusionscript can't load here but another interpreter might."""
-    if os.environ.get("OPENEDIT_RESOLVE_CHILD") or os.environ.get("OPENEDIT_RESOLVE_FAKE"):
-        return None
     if not isinstance(request, dict) or request.get("cmd") == "ping":
+        return None
+    return _relay_python()
+
+
+def _relay_python():
+    """A compatible interpreter to hand over to, when fusionscript can't load in this one."""
+    if os.environ.get("OPENEDIT_RESOLVE_CHILD") or os.environ.get("OPENEDIT_RESOLVE_FAKE"):
         return None
     try:
         load_script_module()
@@ -1125,6 +1183,15 @@ def main(argv=None):
     out = _protect_stdout()
     bridge = ResolveBridge()
     if "--serve" in argv:
+        # Persistent mode: if fusionscript can't load here, become the compatible
+        # interpreter once (exec) rather than relaying every request.
+        py = _relay_python()
+        if py:
+            log("serving from compatible interpreter", py)
+            out.flush()
+            os.dup2(out.fileno(), 1)
+            env = dict(os.environ, OPENEDIT_RESOLVE_CHILD="1")
+            os.execve(py, [py, os.path.abspath(__file__), "--serve"], env)
         serve(bridge, out)
         return 0
     if "--cmd" in argv:

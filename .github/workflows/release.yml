@@ -1,0 +1,73 @@
+name: Release macOS app
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14 # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            app/package-lock.json
+
+      - name: Build OpenEdit engine
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build DMG (arm64)
+        working-directory: app
+        env:
+          # Optional Developer ID signing + notarization. Without MAC_SIGN_IDENTITY the app is
+          # ad-hoc signed and Gatekeeper asks users to confirm on first launch.
+          MAC_SIGN_IDENTITY: ${{ secrets.MAC_SIGN_IDENTITY }} # e.g. "Developer ID Application: Jane Doe (TEAMID1234)"
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          npm run stage
+          if [ -n "$MAC_SIGN_IDENTITY" ]; then
+            npx electron-builder --mac dmg --arm64 --publish never \
+              "-c.mac.identity=${MAC_SIGN_IDENTITY#Developer ID Application: }" \
+              -c.mac.hardenedRuntime=true -c.mac.entitlements=build/entitlements.mac.plist \
+              -c.mac.entitlementsInherit=build/entitlements.mac.plist -c.mac.notarize=true
+          else
+            npx electron-builder --mac dmg --arm64 --publish never
+          fi
+
+      - name: Smoke test packaged app and bundled CLI
+        working-directory: app
+        run: |
+          brew install ffmpeg whisper-cpp || true
+          npx playwright test test/cli.spec.ts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenEdit-macOS-arm64
+          path: app/release/*.dmg
+
+      - name: Attach to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/release/*.dmg
+          generate_release_notes: true

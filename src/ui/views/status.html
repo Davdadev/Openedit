@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenEdit editor status</title>
+<!--#shared-css-->
+<style>
+  .hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+  .host {
+    position: relative; border-radius: 12px; padding: 12px; background: var(--color-background-secondary); border: 1px solid var(--color-border-tertiary);
+    display: flex; flex-direction: column; gap: 10px; min-height: 150px; animation: oe-in 0.5s var(--oe-ease) both; transition: border-color 0.2s, box-shadow 0.3s;
+  }
+  .host.active { border-color: color-mix(in srgb, var(--oe-accent) 55%, transparent); box-shadow: 0 0 0 3px var(--oe-accent-soft); background: var(--color-background-primary); }
+  .top { display: flex; align-items: center; gap: 10px; }
+  .mono-tile { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: #fff; flex: none; letter-spacing: -0.02em; box-shadow: 0 1px 0 rgba(255,255,255,.2) inset; }
+  .t-premiere { background: linear-gradient(140deg, #3b1a6e, #7a4fe0); }
+  .t-resolve { background: linear-gradient(140deg, #1d3557, #e76f51 85%); }
+  .t-standalone { background: linear-gradient(140deg, #0f3d3a, #1f9e8f); font-family: var(--font-mono); font-size: 13px; }
+  .nm { font-weight: 600; font-size: 13.5px; line-height: 1.2; }
+  .kind { font-size: 11.5px; color: var(--color-text-tertiary); }
+  .state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+  .state .dot { width: 8px; height: 8px; }
+  .on { color: var(--oe-ok); } .on .dot { animation: oe-pulse 2s infinite; }
+  .off { color: var(--color-text-tertiary); }
+  .unk { color: var(--color-text-tertiary); } .unk .dot { background: transparent; border: 1.5px solid currentColor; }
+  .det { font-size: 12px; color: var(--color-text-secondary); display: grid; gap: 2px; }
+  .det b { color: var(--color-text-primary); font-weight: 500; }
+  .det .ln { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ribbon { margin-top: auto; align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--oe-accent); background: var(--oe-accent-soft); padding: 3px 7px; border-radius: 6px; }
+  .host .btn { margin-top: auto; align-self: flex-start; }
+  .foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--color-text-secondary); }
+  .warn { margin-top: 10px; font-size: 12px; color: var(--color-text-warning); }
+</style>
+</head>
+<body>
+<div id="app" class="oe-card loading-card">
+  <div class="loading-label"><span class="spinner"></span><span>Checking editors…</span></div>
+  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px">
+    <div class="skeleton" style="height: 150px"></div><div class="skeleton" style="height: 150px"></div><div class="skeleton" style="height: 150px"></div>
+  </div>
+</div>
+<!--#shared-js-->
+<script>
+(function () {
+  "use strict";
+  var E = OE.esc;
+  var app = document.getElementById("app");
+  var data;
+  var META = {
+    premiere: { name: "Premiere Pro", tile: "Pr", kind: "Adobe · via the OpenEdit panel" },
+    resolve: { name: "DaVinci Resolve", tile: "Dv", kind: "Blackmagic · scripting API" },
+    standalone: { name: "Standalone", tile: "ff", kind: "No editor · renders with ffmpeg" },
+  };
+
+  OE.on("result", function (res) {
+    var sc = res && res.structuredContent;
+    if (res && res.isError || !sc || sc.view !== "status") {
+      app.className = "oe-card";
+      app.innerHTML = '<div class="oe-head"><div class="oe-logo">' + OE.icon("monitor") + '</div><div class="oe-title">Editors</div></div><div class="error-box">' + E(OE.textOf(res) || "No status in this result.") + "</div>";
+      return;
+    }
+    data = sc;
+    render();
+  });
+
+  function hostCard(h, i) {
+    var m = META[h.host] || { name: h.host, tile: h.host.slice(0, 2), kind: "" };
+    var st = h.connected === true ? ["on", "Connected"] : h.connected === false ? ["off", "Not connected"] : ["unk", "Not checked"];
+    var det = [];
+    if (h.project) det.push("Project <b>" + E(h.project) + "</b>");
+    if (h.sequence) det.push("Sequence <b>" + E(h.sequence) + "</b>");
+    if (h.version) det.push("Version " + E(h.version));
+    if (!det.length && h.detail) det.push(E(h.detail));
+    return '<div class="host' + (h.active ? " active" : "") + '" data-host="' + E(h.host) + '" style="animation-delay:' + i * 70 + 'ms">' +
+      '<div class="top"><div class="mono-tile t-' + E(h.host) + '">' + E(m.tile) + '</div><div><div class="nm">' + E(m.name) + '</div><div class="kind">' + E(m.kind) + "</div></div></div>" +
+      '<div class="state ' + st[0] + '"><span class="dot"></span>' + st[1] + "</div>" +
+      '<div class="det">' + det.map(function (x) { return '<div class="ln">' + x + "</div>"; }).join("") + "</div>" +
+      (h.active ? '<span class="ribbon">' + OE.icon("check").replace("<svg", '<svg style="width:12px;height:12px"') + 'Active</span>' : '<button class="btn sm use"' + (h.connected === false ? ' title="Not connected — OpenEdit will try anyway"' : "") + ">Use " + E(m.name) + "</button>") +
+      "</div>";
+  }
+
+  function render() {
+    var d = data;
+    var active = META[d.active] ? META[d.active].name : d.active;
+    app.className = "oe-card";
+    app.innerHTML =
+      '<div class="oe-head"><div class="oe-logo">' + OE.icon("monitor") + '</div><div class="oe-title">Editor</div><div class="oe-sub">Driving <b style="color:var(--color-text-primary)">' + E(active) + '</b></div><div class="oe-spacer"></div><span class="chip">Local · no uploads</span></div>' +
+      '<div class="hosts">' + d.hosts.map(hostCard).join("") + "</div>" +
+      (d.warning ? '<div class="warn">' + E(d.warning) + "</div>" : "") +
+      (d.studioUrl ? '<div class="foot">Watch edits live in OpenEdit Studio<div class="oe-spacer"></div><button class="btn sm" id="studio">' + OE.icon("external") + "Open Studio</button></div>" : "");
+    document.querySelectorAll(".host .use").forEach(function (b) {
+      b.onclick = function () { pick(b.closest(".host").dataset.host, b); };
+    });
+    var s = document.getElementById("studio");
+    if (s) s.onclick = function () { OE.openLink(d.studioUrl).catch(function () { OE.toast(d.studioUrl); }); };
+    OE.resize();
+  }
+
+  function pick(host, btn) {
+    if (!OE.canCallTools()) {
+      OE.sendMessage("Switch OpenEdit to " + host + " (select_host).").then(function () { OE.toast("Sent to Claude"); }, function () { OE.toast("The host did not accept the message"); });
+      return;
+    }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Switching';
+    OE.callTool("select_host", { host: host }).then(function (r) {
+      if (r.structuredContent && r.structuredContent.view === "status") { data = r.structuredContent; render(); }
+      OE.updateContext("The user switched OpenEdit to " + host + " in the editor status view.", { host: host });
+    }).catch(function (e) { btn.disabled = false; btn.textContent = "Use"; OE.toast(e.message); });
+  }
+
+  OE.connect({ name: "openedit-status", version: "0.1.0" }).catch(function () {});
+})();
+</script>
+</body>
+</html>

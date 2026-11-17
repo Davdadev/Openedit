@@ -11,6 +11,11 @@ Claude Code --MCP--> OpenEdit server --HTTP 127.0.0.1:47821--> CEP panel (Node) 
 The wire protocol is in [`docs/PROTOCOL.md`](../docs/PROTOCOL.md) and the
 argument/result types in [`src/hosts/types.ts`](../src/hosts/types.ts).
 
+**No panel?** The edit also travels as a file: ask Claude to `export_timeline` with
+`format: "fcp7"` and use **File > Import** in Premiere. The sequence arrives with frame-accurate
+cuts, linked audio, markers and zoom keyframes (Basic Motion scale); captions come as an `.srt`
+sidecar.
+
 ## Requirements
 
 - Premiere Pro **23.0 (2023) or newer**, macOS or Windows.

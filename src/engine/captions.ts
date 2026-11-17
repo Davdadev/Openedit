@@ -13,8 +13,8 @@ export interface CueOptions {
 }
 
 /**
- * Map a word into edit time. It survives if most of it lies in one kept
- * segment; its times are clipped to that segment.
+ * Map a word into edit time. It survives if most of it (or at least 0.12 s)
+ * lies in one kept segment; its times are clipped to that segment.
  */
 function remapWord(w: Word, keep: CutPlan["keep"], offsets: number[]): Word | null {
   let bestIdx = -1;
@@ -26,7 +26,9 @@ function remapWord(w: Word, keep: CutPlan["keep"], offsets: number[]): Word | nu
     if (ov > bestOverlap) [bestIdx, bestOverlap] = [i, ov];
   }
   const len = Math.max(w.end - w.start, 1e-3);
-  if (bestIdx < 0 || bestOverlap / len < 0.5) return null;
+  // Silence cuts are padded from the audio, so a word whose (approximate) timing
+  // spills into a cut but still has a solid chunk in a kept segment was spoken there.
+  if (bestIdx < 0 || (bestOverlap / len < 0.5 && bestOverlap < 0.12)) return null;
   const k = keep[bestIdx];
   const s = Math.max(w.start, k.start);
   const e = Math.min(w.end, k.end);

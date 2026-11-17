@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenEdit stock media</title>
+<!--#shared-css-->
+<style>
+  .provs { display: flex; gap: 10px; flex-wrap: wrap; margin: -4px 0 12px; font-size: 11.5px; color: var(--color-text-tertiary); }
+  .provs span { display: inline-flex; align-items: center; gap: 5px; text-transform: capitalize; }
+  .provs .dot { width: 6px; height: 6px; }
+  .st-ok { color: var(--oe-ok); } .st-cached { color: var(--oe-accent); } .st-skipped { color: var(--color-text-tertiary); } .st-error, .st-timeout { color: var(--color-text-danger); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 10px; max-height: 430px; padding: 1px; }
+  .grid.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 36px), transparent); mask-image: linear-gradient(#000 calc(100% - 36px), transparent); }
+  .card {
+    position: relative; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--color-background-secondary);
+    border: 1px solid var(--color-border-tertiary); transition: transform 0.25s var(--oe-ease), box-shadow 0.25s, border-color 0.2s;
+    animation: oe-in 0.5s var(--oe-ease) both;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14); border-color: var(--color-border-secondary); }
+  .card.got { border-color: color-mix(in srgb, var(--oe-ok) 45%, transparent); }
+  .media { position: relative; aspect-ratio: 16 / 10; background: var(--color-background-tertiary); overflow: hidden; }
+  .media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transform: scale(1.04); transition: opacity 0.5s, transform 0.8s var(--oe-ease); }
+  .media img.ok { opacity: 1; transform: scale(1); }
+  .card:hover .media img.ok { transform: scale(1.035); }
+  .media .ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-text-tertiary); }
+  .media .ph svg { width: 28px; height: 28px; opacity: 0.6; }
+  .media::after { content: ""; position: absolute; inset: auto 0 0 0; height: 44%; background: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent); pointer-events: none; }
+  .badge {
+    position: absolute; z-index: 2; height: 20px; padding: 0 7px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.01em; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); white-space: nowrap;
+  }
+  .prov { top: 8px; left: 8px; background: rgba(15, 15, 15, 0.55); color: #fff; text-transform: capitalize; }
+  .lic { top: 8px; right: 8px; color: #fff; }
+  .lic.free { background: color-mix(in srgb, #12805c 82%, transparent); }
+  .lic.credit { background: color-mix(in srgb, #b26a00 85%, transparent); }
+  .lic.restricted { background: color-mix(in srgb, #b4233a 85%, transparent); }
+  .spec { bottom: 8px; left: 8px; background: rgba(15, 15, 15, 0.55); color: #fff; font-variant-numeric: tabular-nums; }
+  .orient { bottom: 8px; right: 8px; background: rgba(15, 15, 15, 0.55); color: #fff; }
+
+  .audio .media { aspect-ratio: auto; height: 104px; background: linear-gradient(135deg, color-mix(in srgb, var(--oe-retake) 30%, var(--color-background-tertiary)), color-mix(in srgb, var(--oe-accent) 28%, var(--color-background-tertiary))); }
+  .audio .media::after { display: none; }
+  .bars { position: absolute; left: 14px; right: 14px; top: 34px; bottom: 30px; display: flex; align-items: center; gap: 2px; }
+  .bars i { flex: 1; border-radius: 2px; background: color-mix(in srgb, var(--color-text-primary) 55%, transparent); transition: background 0.2s; }
+  .audio.playing .bars i.p { background: var(--oe-accent); }
+  .play {
+    position: absolute; z-index: 3; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; border: 0; cursor: pointer;
+    background: var(--color-background-primary); color: var(--color-text-primary); display: grid; place-items: center; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+    transition: transform 0.2s var(--oe-ease);
+  }
+  .play:hover { transform: scale(1.08); }
+  .play svg { width: 16px; height: 16px; }
+  .audio .spec { background: rgba(15, 15, 15, 0.45); }
+
+  .info { padding: 9px 11px 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .t { font-weight: 600; font-size: 12.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.7em; }
+  .by { font-size: 11.5px; color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row2 { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+  .score { flex: 1; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--color-text-tertiary); min-width: 0; }
+  .score .track { flex: 1; height: 4px; border-radius: 2px; background: var(--color-border-secondary); overflow: hidden; }
+  .score .fill { height: 100%; border-radius: 2px; background: var(--oe-accent); width: 0; transition: width 1s var(--oe-ease); }
+  .use { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
+  .got .use { background: color-mix(in srgb, var(--oe-ok) 14%, transparent); color: var(--oe-ok); border-color: transparent; }
+  .path { font-size: 11px; color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--color-text-secondary); min-width: 0; }
+  .foot .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .warn { margin-top: 10px; font-size: 12px; color: var(--color-text-warning); }
+  .empty { padding: 26px 10px; text-align: center; color: var(--color-text-secondary); }
+</style>
+</head>
+<body>
+<div id="app" class="oe-card loading-card">
+  <div class="loading-label"><span class="spinner"></span><span id="loading-text">Searching free stock media…</span></div>
+  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px">
+    <div class="skeleton" style="aspect-ratio: 16/12"></div><div class="skeleton" style="aspect-ratio: 16/12"></div><div class="skeleton" style="aspect-ratio: 16/12"></div>
+  </div>
+</div>
+<!--#shared-js-->
+<script>
+(function () {
+  "use strict";
+  var E = OE.esc;
+  var app = document.getElementById("app");
+  var data, audio, playingGid;
+  var AUDIO = { music: 1, sfx: 1, audio: 1 };
+
+  OE.on("input", function (a) {
+    if (data || !a) return;
+    var name = OE.ctx.toolInfo && OE.ctx.toolInfo.tool && OE.ctx.toolInfo.tool.name;
+    if (a.query) document.getElementById("loading-text").textContent = (name === "get_media" ? "Finding and downloading " : "Searching for ") + "“" + a.query + "”…";
+    else if (name === "download_media") document.getElementById("loading-text").textContent = "Downloading…";
+  });
+  OE.on("result", function (res) {
+    var sc = res && res.structuredContent;
+    if (res && res.isError && !(sc && sc.items && sc.items.length) || !sc || sc.view !== "media") {
+      app.className = "oe-card";
+      app.innerHTML = '<div class="oe-head"><div class="oe-logo">' + OE.icon("film") + '</div><div class="oe-title">Stock media</div></div><div class="error-box">' + E(OE.textOf(res) || "No media in this result.") + "</div>";
+      return;
+    }
+    data = sc;
+    render();
+  });
+
+  function licClass(it) {
+    var c = it.licenseCode || "";
+    if (/nc|nd/.test(c)) return "restricted";
+    return it.attributionRequired ? "credit" : "free";
+  }
+  function licLabel(it) {
+    var c = it.licenseCode || "";
+    var map = { cc0: "CC0", pd: "Public domain", stock: "Free to use", "cc-by": "CC BY", "cc-by-sa": "CC BY-SA", gfdl: "GFDL", "cc-by-nc": "CC BY-NC", "cc-by-nc-sa": "CC BY-NC-SA", "cc-by-nd": "CC BY-ND", "cc-by-nc-nd": "CC BY-NC-ND" };
+    return map[c] || it.license || "License?";
+  }
+  function res(it) {
+    if (!it.width || !it.height) return "";
+    var m = Math.min(it.width, it.height);
+    return m >= 2160 ? "4K" : m >= 1440 ? "1440p" : m >= 1080 ? "1080p" : m >= 720 ? "720p" : it.width + "×" + it.height;
+  }
+  function kindIcon(k) { return AUDIO[k] ? "music" : k === "image" ? "image" : "film"; }
+
+  function bars(seed) {
+    var h = "", s = 0;
+    for (var i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) % 100003;
+    for (i = 0; i < 36; i++) {
+      s = (s * 9301 + 49297) % 233280;
+      var v = 0.22 + 0.78 * Math.abs(Math.sin(i * 0.55 + s / 50000)) * (0.55 + (s / 233280) * 0.45);
+      h += '<i style="height:' + Math.round(v * 100) + '%"></i>';
+    }
+    return h;
+  }
+
+  function card(it, i) {
+    var a = !!AUDIO[it.kind];
+    var src = it.thumb || (!a ? it.previewUrl : "");
+    var spec = [it.duration != null ? OE.dur(it.duration) : "", res(it)].filter(Boolean).join(" · ");
+    var portrait = it.width && it.height && it.height > it.width * 1.1;
+    var got = !!it.path;
+    return '<div class="card' + (a ? " audio" : "") + (got ? " got" : "") + '" data-i="' + i + '" style="animation-delay:' + Math.min(i * 55, 600) + 'ms">' +
+      '<div class="media">' +
+      (src ? '<img alt="" loading="lazy" referrerpolicy="no-referrer" src="' + E(src) + '" />' : "") +
+      (a ? '<div class="bars">' + bars(it.gid) + "</div>" + (it.previewUrl ? '<button class="play" aria-label="Play preview">' + OE.icon("play") + "</button>" : "") : '<div class="ph">' + OE.icon(kindIcon(it.kind)) + "</div>") +
+      '<span class="badge prov">' + E(it.provider) + "</span>" +
+      '<span class="badge lic ' + licClass(it) + '" title="' + E(it.license) + (it.attributionRequired ? " · attribution required" : "") + '">' + E(licLabel(it)) + "</span>" +
+      (spec ? '<span class="badge spec">' + E(spec) + "</span>" : "") +
+      (portrait ? '<span class="badge orient">9:16</span>' : "") +
+      "</div>" +
+      '<div class="info"><div class="t" title="' + E(it.title) + '">' + E(it.title) + "</div>" +
+      '<div class="by">' + (it.author ? "by " + E(it.author) : E(it.provider)) + (it.attributionRequired ? ' · <span style="color:var(--color-text-warning)">credit required</span>' : "") + "</div>" +
+      (got ? '<div class="path mono" title="' + E(it.path) + '">' + E(it.path.split("/").slice(-2).join("/")) + "</div>" : "") +
+      '<div class="row2">' +
+      (it.score != null ? '<div class="score" title="' + E(it.reason || "") + '"><div class="track"><div class="fill" data-w="' + Math.round(Math.min(1, it.score) * 100) + '"></div></div><span class="num">' + Math.round(Math.min(1, it.score) * 100) + "</span></div>" : '<div class="oe-spacer"></div>') +
+      '<button class="btn use"' + (got ? " disabled" : "") + ">" + (got ? OE.icon("check") + (it.existing ? "In library" : "In library") : OE.icon("download") + "Use this") + "</button>" +
+      "</div></div></div>";
+  }
+
+  function render() {
+    var d = data;
+    var title = d.mode === "download" ? (d.items.length ? "Added to your library" : "Download") : "Stock media";
+    var sub = d.query ? "“" + E(d.query) + "”" + (d.kind ? " · " + E(d.kind) : "") : "";
+    var provs = (d.providers || []).map(function (p) {
+      return '<span class="st-' + E(p.status) + '" title="' + E(p.detail || p.status) + '"><span class="dot"></span><span style="color:var(--color-text-secondary)">' + E(p.provider) + "</span>" + (p.status === "ok" || p.status === "cached" ? ' <span class="num">' + p.count + "</span>" : "") + "</span>";
+    }).join("");
+    app.className = "oe-card";
+    app.innerHTML =
+      '<div class="oe-head"><div class="oe-logo">' + OE.icon(kindIcon(d.kind || (d.items[0] && d.items[0].kind))) + '</div><div class="oe-title">' + title + '</div><div class="oe-sub">' + sub + '</div><div class="oe-spacer"></div>' +
+      (d.mode === "find" && d.considered != null ? '<span class="chip"><b class="num">' + d.items.length + '</b> of <span class="num">' + d.considered + "</span></span>" : "") + "</div>" +
+      (provs ? '<div class="provs">' + provs + "</div>" : "") +
+      (d.items.length ? '<div class="grid scroll" id="grid">' + d.items.map(card).join("") + "</div>" : '<div class="empty">Nothing matched. Try a simpler query.</div>') +
+      (d.errors && d.errors.length ? '<div class="warn">' + E(d.errors.join(" · ")) + "</div>" : "") +
+      (d.creditsPath ? '<div class="foot">' + OE.icon("folder") + '<span class="mono" title="' + E(d.creditsPath) + '">' + E(d.creditsPath) + '</span><div class="oe-spacer"></div><button class="btn sm ghost" id="copyc">' + OE.icon("copy") + "Copy</button></div>" : "");
+    wire();
+    requestAnimationFrame(function () {
+      document.querySelectorAll(".fill").forEach(function (f) { f.style.width = f.dataset.w + "%"; });
+    });
+    OE.resize();
+  }
+
+  function wire() {
+    document.querySelectorAll(".media img").forEach(function (img) {
+      var done = function () { img.classList.add("ok"); var ph = img.parentNode.querySelector(".ph"); if (ph) ph.style.opacity = 0; };
+      if (img.complete && img.naturalWidth) done();
+      img.addEventListener("load", done);
+      img.addEventListener("error", function () { img.remove(); });
+    });
+    document.querySelectorAll(".card").forEach(function (el) {
+      var it = data.items[Number(el.dataset.i)];
+      var use = el.querySelector(".use");
+      use.onclick = function () { take(it, el, use); };
+      var play = el.querySelector(".play");
+      if (play) play.onclick = function () { toggleAudio(it, el, play); };
+    });
+    var grid = document.getElementById("grid");
+    if (grid) {
+      var fade = function () { grid.classList.toggle("more", grid.scrollTop + grid.clientHeight < grid.scrollHeight - 4); };
+      grid.onscroll = fade;
+      fade();
+    }
+    var cc = document.getElementById("copyc");
+    if (cc) cc.onclick = function () { OE.copy(data.creditsPath).then(function (ok) { OE.toast(ok ? "Path copied" : data.creditsPath); }); };
+  }
+
+  function take(it, el, btn) {
+    if (!OE.canCallTools()) {
+      OE.sendMessage("Download " + it.gid + " (“" + it.title + "”) with download_media and use it in the edit.").then(function () { OE.toast("Sent to Claude"); }, function () { OE.toast("The host did not accept the message"); });
+      return;
+    }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Downloading';
+    OE.callTool("download_media", { ids: [it.gid] }).then(function (r) {
+      var got = r.structuredContent && r.structuredContent.items && r.structuredContent.items[0];
+      if (!got || !got.path) throw new Error(OE.textOf(r) || "Download failed");
+      Object.assign(it, { path: got.path, existing: got.existing, thumb: got.thumb || it.thumb });
+      var tmp = document.createElement("div");
+      tmp.innerHTML = card(it, Number(el.dataset.i));
+      var fresh = tmp.firstChild;
+      fresh.style.animation = "none";
+      el.replaceWith(fresh);
+      wire();
+      fresh.querySelectorAll(".fill").forEach(function (f) { f.style.transition = "none"; f.style.width = f.dataset.w + "%"; });
+      OE.toast("Saved to library");
+      OE.updateContext("The user chose stock media in the OpenEdit view: " + it.gid + " “" + it.title + "” (" + it.license + (it.attributionRequired ? ", attribution required" : "") + ") downloaded to " + got.path + ". Use this file in the edit.", { downloaded: { gid: it.gid, path: got.path } });
+    }).catch(function (e) {
+      btn.disabled = false;
+      btn.innerHTML = OE.icon("download") + "Use this";
+      OE.toast(e.message || "Download failed");
+    });
+  }
+
+  function toggleAudio(it, el, btn) {
+    if (audio && playingGid === it.gid) {
+      audio.pause();
+      return;
+    }
+    if (audio) audio.pause();
+    document.querySelectorAll(".card.playing").forEach(function (c) { c.classList.remove("playing"); c.querySelector(".play").innerHTML = OE.icon("play"); });
+    audio = new Audio(it.previewUrl);
+    playingGid = it.gid;
+    var bs = el.querySelectorAll(".bars i");
+    audio.ontimeupdate = function () {
+      var p = audio.duration ? audio.currentTime / audio.duration : 0;
+      bs.forEach(function (b, i) { b.classList.toggle("p", i / bs.length <= p); });
+    };
+    audio.onpause = audio.onended = function () { el.classList.remove("playing"); btn.innerHTML = OE.icon("play"); if (playingGid === it.gid) playingGid = null; };
+    audio.onplay = function () { el.classList.add("playing"); btn.innerHTML = OE.icon("pause"); };
+    audio.play().catch(function () { OE.toast("Preview unavailable here"); playingGid = null; });
+  }
+
+  OE.connect({ name: "openedit-media", version: "0.1.0" }).catch(function () {});
+})();
+</script>
+</body>
+</html>
