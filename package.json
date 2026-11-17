@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Open-source, local, subscription-free AI video editing toolkit driven by Claude over MCP. Works in Premiere Pro, DaVinci Resolve, or standalone with ffmpeg.",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-2.0-only",
   "bin": {
     "openedit": "dist/cli.js"
   },

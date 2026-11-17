@@ -1,5 +1,5 @@
 /*
- * OpenEdit minimal CEP interface (MIT, part of OpenEdit).
+ * OpenEdit minimal CEP interface (GPL-2.0, part of OpenEdit).
  * Implements only the small subset of the CEP JavaScript interface that the
  * OpenEdit panel uses, on top of the native window.__adobe_cep__ object that
  * every CEP host injects. Avoids redistributing Adobe's CSInterface.js.

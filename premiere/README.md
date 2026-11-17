@@ -74,7 +74,7 @@ because the MCP server uses it too.
 | `CSXS/manifest.xml` | Bundle `com.openedit.premiere`, panel "OpenEdit", host `PPRO [23.0,99.9]`, CEF flags `--enable-nodejs --mixed-context --allow-file-access`. |
 | `index.html`, `panel.js` | Status UI (listening state, port, token path, Premiere version, project, active sequence, recent commands). Loads the host scripts and starts the server. |
 | `lib/server.js` | The HTTP server, as a plain CommonJS module with an injected `evalScript`, so it is testable without CEP. |
-| `lib/CSInterface.js` | OpenEdit's own minimal CEP interface (MIT): `evalScript`, `getSystemPath` and a few helpers on top of the host's native `window.__adobe_cep__`. |
+| `lib/CSInterface.js` | OpenEdit's own minimal CEP interface (GPL-2.0, like the rest of OpenEdit): `evalScript`, `getSystemPath` and a few helpers on top of the host's native `window.__adobe_cep__`. |
 | `host/openedit.jsx` | ExtendScript entry: `$.OpenEdit` namespace, JSON writer/parser, helpers, `dispatch()`, loads the other parts with `$.evalFile`. |
 | `host/oe-read.jsx` | `status`, `getTimeline`, `getSourceMedia` |
 | `host/oe-cut.jsx` | `applyCutPlan` |

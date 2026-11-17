@@ -42,7 +42,7 @@ through a paid server. OpenEdit is the opposite:
   decides what to cut, and shows you the plan before touching your timeline.
 - **Local.** Transcription runs on whisper.cpp on your machine. Nothing is uploaded.
 - **Three hosts, one workflow.** The same tools work in Premiere, Resolve, or standalone.
-- **Open.** MIT licensed. Read it, fork it, add tools.
+- **Open.** GPL-2.0 licensed. Read it, fork it, add tools.
 
 ## Install
 
@@ -173,4 +173,4 @@ an ffmpeg built with libass.
 
 ## License
 
-MIT. HyperFrames is Apache-2.0 (used as an optional dependency, not vendored).
+GPL-2.0 (see [LICENSE](LICENSE)). HyperFrames is Apache-2.0 and is installed separately as an optional dependency, not bundled.
