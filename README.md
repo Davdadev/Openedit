@@ -48,7 +48,7 @@ brew install ffmpeg whisper-cpp
 ```
 
 ```bash
-git clone https://github.com/davthedev/openedit.git && cd openedit
+git clone https://github.com/Davdadev/openedit.git && cd openedit
 ```
 
 ```bash
