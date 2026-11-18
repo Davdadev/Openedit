@@ -44,6 +44,24 @@ through a paid server. OpenEdit is the opposite:
 - **Three hosts, one workflow.** The same tools work in Premiere, Resolve, or standalone.
 - **Open.** GPL-2.0 licensed. Read it, fork it, add tools.
 
+## Install as a Claude plugin
+
+The plugin bundles the MCP server and the [editing skills](#skills). Needs Node 22+, npm,
+ffmpeg and whisper.cpp (`brew install ffmpeg whisper-cpp`). In Claude Code:
+
+```
+/plugin marketplace add Davdadev/openedit
+```
+
+```
+/plugin install openedit@openedit
+```
+
+Restart Claude Code. The first start builds the server (`npm ci` + `tsc`, about a minute);
+details, troubleshooting and updating are in [docs/SKILLS.md](docs/SKILLS.md). If you also used
+the manual install below, remove that server (`claude mcp remove -s user openedit`) so the
+tools are not listed twice.
+
 ## Install
 
 Requirements: Node 22+, ffmpeg, whisper.cpp (`whisper-cli`).
@@ -121,6 +139,23 @@ The `auto_edit` MCP prompt walks Claude through the standard workflow.
 `revise_plan` · `add_markers` · `add_zooms` · `auto_zooms` · `import_media` · `place_clips` · `render` ·
 `export_timeline` · `motion_templates` · `render_motion` · `render_caption_overlay` · `get_media` ·
 `find_media` · `download_media` · `media_credits` · `media_sources` · `open_studio` · `studio_overlay_snippet`
+
+## Skills
+
+The tools make edits possible; the skills in [`skills/`](skills) make Claude edit like a
+skilled human editor. They load automatically when a request needs them:
+
+| Skill | What it teaches Claude |
+|---|---|
+| `openedit-editing` | Read first, decide the story, cut on meaning (keep breaths and beats), pacing by platform, sparing zooms, readable captions, ducked music, loudness targets, and an anti-"AI slop" checklist |
+| `openedit-shorts` | 9:16 shorts from long-form: a self-contained 20-60 s moment, a 1-2 s hook, face-tracked reframe, captions inside platform safe zones |
+| `openedit-stock-media` | B-roll, music and SFX that fit the sentence and the footage, and their licence and credit obligations |
+| `openedit-review` | QA every render (frames, duration, LUFS/true peak, captions, framing) and fix before reporting |
+| `openedit-resolve-computer-use` | When and how to drive DaVinci Resolve's UI with computer use for what its scripting API can't do (free Resolve, keyframes, transitions, Fairlight, Deliver) |
+| `openedit-premiere-computer-use` | The same for Premiere Pro (panel setup, caption styles, keyframes, ducking, Export mode) |
+
+They come with the plugin. Without the plugin: `cp -R skills/* ~/.claude/skills/`.
+See [docs/SKILLS.md](docs/SKILLS.md).
 
 ## Architecture
 

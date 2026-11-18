@@ -78,7 +78,13 @@ export class PremiereHost implements EditorHost {
     if (res.status === 401 || res.status === 403) {
       throw new Error("Premiere bridge rejected the token. Reopen the OpenEdit panel so it re-reads ~/.openedit/token.");
     }
-    const body = (await res.json()) as BridgeResponse;
+    const raw = await res.text();
+    let body: BridgeResponse;
+    try {
+      body = JSON.parse(raw) as BridgeResponse;
+    } catch {
+      throw new Error(`Premiere bridge returned HTTP ${res.status} with a non-JSON body for ${cmd}: ${raw.slice(0, 200)}`);
+    }
     return unwrap<T>(body, cmd);
   }
 

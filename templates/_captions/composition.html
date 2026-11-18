@@ -48,7 +48,7 @@
     var pages = P.pages || [];
     // vertical placement
     var pos = P.position || (style === "bold-pop" ? "middle-low" : "bottom");
-    var frac = { top: 0.1, middle: 0.5, "middle-low": OE.portrait ? 0.66 : 0.74, bottom: OE.portrait ? 0.8 : 0.88 }[pos] || 0.88;
+    var frac = { top: 0.1, middle: 0.5, "middle-low": OE.portrait ? 0.66 : 0.74, bottom: OE.portrait ? 0.8 : 0.86 }[pos] || 0.86;
     cap.style.top = (frac * H) + "px";
     cap.style.transform = pos === "top" ? "none" : pos === "bottom" ? "translateY(-100%)" : "translateY(-50%)";
 
@@ -57,7 +57,11 @@
       current = i;
       var pg = pages[i];
       if (!pg) { page.innerHTML = ""; words = []; return; }
-      var html = pg.words.map(function (w) { return '<span class="w oe-w">' + OE.esc(w.text) + "</span>"; }).join(" ");
+      // A word flagged br ends a line (the cue's own "\n" break); otherwise words are space-separated.
+      var html = pg.words.map(function (w, k) {
+        var sep = k === pg.words.length - 1 ? "" : w.br ? "<br>" : " ";
+        return '<span class="w oe-w">' + OE.esc(w.text) + "</span>" + sep;
+      }).join("");
       page.innerHTML = style === "clean" ? '<span class="box">' + html + "</span>" : html;
       words = Array.prototype.slice.call(page.querySelectorAll(".w"));
       page.style.fontSize = "";

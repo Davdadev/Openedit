@@ -3,16 +3,18 @@ import { basename, extname, join, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { CAPTION_STYLES, type CaptionStyle, cuesFromTranscript, toASS, toSRT, toVTT } from "../engine/captions.js";
+import { CAPTION_STYLES, type CaptionAspect, type CaptionStyle, captionPreset, cuesFromTranscript, defaultCaptionStyle, placeCaptions, toASS, toSRT, toVTT } from "../engine/captions.js";
 import { buildCutPlan, summarizePlan } from "../engine/cutplan.js";
 import { probe, resolveMediaPath } from "../engine/media.js";
-import { paths } from "../engine/paths.js";
+import { installShutdownHandlers } from "../engine/exec.js";
+import { paths, sidecarPath } from "../engine/paths.js";
 import { editDuration, editSegments } from "../engine/remap.js";
 import type { Reframe, ZoomSpec } from "../engine/render.js";
 import { INTERCHANGE_EXT, type InterchangeFormat, probeSourceDetails, writeInterchange } from "../engine/interchange.js";
 import { detectSilencesDetailed } from "../engine/silence.js";
 import { adaptiveLevels, analyzeEnergy, transcriptPauses, unionRanges } from "../engine/vad.js";
-import { planZooms } from "../engine/zooms.js";
+import { type ZoomDensity, planZooms, zoomWarnings } from "../engine/zooms.js";
+import { formatReview, reviewEdit } from "../engine/review.js";
 import { DEFAULT_FILLERS, TIGHTNESS, detectFillers, findRetakes } from "../engine/cutplan.js";
 import { WHISPER_MODELS, type WhisperModel, stamp, transcribe, transcriptToText } from "../engine/transcribe.js";
 import { activeHost, autoDetect, currentHostName, getHost, setActiveHost, StandaloneHost } from "../hosts/index.js";
@@ -27,7 +29,11 @@ import { cutPlanView, registerUi, renderView, statusView, transcriptView, uiMeta
 
 export const VERSION = "0.1.0";
 
-type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; structuredContent?: Record<string, unknown> };
+type ToolResult = {
+  content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[];
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+};
 
 /** Attach structuredContent for the inline MCP Apps view (text content stays for text-only hosts). */
 function withView(res: ToolResult, data: object | undefined): ToolResult {
@@ -94,10 +100,11 @@ Standard workflow:
 3. plan_cuts {path, removeSilences, removeFillers, removeRetakes, manualCuts} — manualCuts are ranges YOU choose from the transcript (e.g. a flubbed sentence, a tangent).
 4. show_plan {planId} — review the cuts with the user (quote what gets removed, time saved). Adjust and re-plan if asked. Do not apply without the user's OK on non-trivial edits.
 5. apply_cuts {planId} — builds a NEW sequence in the editor (the original is never modified).
-6. make_captions {planId, style} — captions timed to the cut edit (styles: clean, bold-pop, minimal).
-7. auto_zooms {planId} or add_zooms — punch-ins to hide jump cuts / add emphasis.
+6. make_captions {planId, aspect} — captions timed to the cut edit. Pass the aspect you will render; the style defaults by context (clean for 16:9, bold-pop only for 9:16 shorts).
+7. auto_zooms {planId} — a few purposeful zooms (mask jump cuts, land real emphasis); add_zooms for your own. Less is more.
 8. Optional: place_clips (b-roll, music with duckDb, SFX), render_motion (titles / lower thirds), add_markers.
 9. render {output, reframe?: "9:16" for shorts, loudnorm: true} — in standalone mode this produces the final mp4.
+10. review_edit {path, planId} after EVERY render: look at the contact sheet and waveform, fix every WARNING (re-plan, re-caption, fewer zooms) and re-render before reporting to the user.
 All times are seconds. Times for markers, zooms, captions and placements are on the EDITED timeline (after cuts).`;
 
 export function createServer(): McpServer {
@@ -225,21 +232,33 @@ export function createServer(): McpServer {
     "plan_cuts",
     {
       description:
-        "Build a cut plan (which parts of the source to keep) from silences, filler words (um/uh…), retakes (restarted sentences) and your own manualCuts chosen from the transcript. Nothing is changed in the editor yet: returns a planId and a summary to review with the user, then call apply_cuts.",
+        "Build a cut plan (which parts of the source to keep) from pauses, filler words (um/uh…), retakes (restarted sentences) and your own manualCuts chosen from the transcript. " +
+          "Pauses are SHORTENED to a natural beat (keepPause, ~0.3 s; more at sentence ends), never removed to zero, cut edges never land inside a word and are snapped to the quietest 10 ms, " +
+          "and kept pieces shorter than minKeep are merged rather than left as choppy fragments. Ambiguous fillers (like, so, you know, I mean) are only removed when isolated by pauses/commas and only if you list them in fillerWords. " +
+          "Nothing is changed in the editor yet: returns a planId and a summary to review with the user, then call apply_cuts.",
       inputSchema: {
         path: z.string().optional(),
         removeSilences: z.boolean().optional().describe("Default true"),
         removeFillers: z.boolean().optional().describe("Default true (needs a transcript; transcribes automatically)"),
         removeRetakes: z.boolean().optional().describe("Default false. Cuts earlier attempts when a sentence is restarted within ~10s."),
-        fillerWords: z.array(z.string()).optional().describe('Override filler list, e.g. ["um","uh","you know"]'),
+        fillerWords: z
+          .array(z.string())
+          .optional()
+          .describe('Override filler list. Default only hesitations (um, uh, erm…). Context words like "like", "so", "you know", "I mean" are removed only where isolated (not "I would like")'),
         tightness: z
           .enum(["loose", "normal", "tight"])
           .optional()
-          .describe("Pacing preset: loose (pauses >= 0.8s, 0.15s padding), normal (0.5s / 0.08s, default), tight (0.3s / 0.04s). Explicit values below win."),
+          .describe("Pacing preset: loose (pauses >= 0.9s shortened to 0.45s), normal (>= 0.6s -> 0.32s, default), tight (>= 0.45s -> 0.22s). Explicit values below win."),
         thresholdDb: z.number().max(0).optional().describe("Fixed silence threshold dBFS. Omit for adaptive (measured from the clip)."),
-        minSilence: z.number().positive().optional().describe("Shortest pause to remove, seconds (default from tightness, 0.5)"),
-        padding: z.number().min(0).max(1).optional().describe("Breathing room kept around speech at each cut, seconds (default from tightness, 0.08)"),
-        minKeep: z.number().min(0).optional().describe("Drop kept pieces shorter than this, seconds (default from tightness, 0.25)"),
+        minSilence: z.number().positive().optional().describe("Shortest pause to shorten, seconds (default from tightness, 0.6)"),
+        keepPause: z
+          .number()
+          .min(0)
+          .max(2)
+          .optional()
+          .describe("Pause left where a longer one is shortened, seconds (default from tightness, 0.32; ~60% after the word, ~40% before the next). 0 removes pauses entirely (not recommended: breathless)"),
+        padding: z.number().min(0).max(1).optional().describe("Legacy: fixed symmetric padding around speech at each cut, replaces the keepPause split. Prefer keepPause"),
+        minKeep: z.number().min(0).optional().describe("Kept pieces shorter than this are merged with a neighbour, seconds (default from tightness, 0.4)"),
         manualCuts: z.array(rangeSchema).optional().describe("Extra SOURCE-time ranges to remove"),
         model: modelSchema,
         language: languageSchema,
@@ -269,16 +288,32 @@ export function createServer(): McpServer {
       const notes: string[] = [];
       let transcript: Transcript | undefined;
       let transcriptPath: string | undefined;
-      try {
-        const t = await transcribe(src, { model, language: a.language });
-        transcript = t.transcript;
-        transcriptPath = t.jsonPath;
-      } catch (e) {
-        if (removeFillers || removeRetakes) throw e;
-        notes.push(`no transcript (${(e as Error).message}); silences from audio energy only`);
+      if (!info.hasAudio) {
+        // Nothing to listen to: no pauses, fillers or retakes to find. Only manualCuts apply.
+        notes.push("no audio stream: pause / filler / retake detection skipped; only manualCuts are applied");
+      } else {
+        try {
+          const t = await transcribe(src, { model, language: a.language });
+          transcript = t.transcript;
+          transcriptPath = t.jsonPath;
+        } catch (e) {
+          if (removeFillers || removeRetakes) throw e;
+          notes.push(`no transcript (${(e as Error).message}); silences from audio energy only`);
+        }
       }
       let silences: { start: number; end: number }[] = [];
-      if (removeSilences) {
+      // 10 ms envelope: protects word tails/onsets and lands cut edges on the quietest 10 ms.
+      let fine: Awaited<ReturnType<typeof analyzeEnergy>> | undefined;
+      let fineLevels: ReturnType<typeof adaptiveLevels> | undefined;
+      if (info.hasAudio) {
+        try {
+          fine = await analyzeEnergy(src, 0.01);
+          fineLevels = adaptiveLevels((await analyzeEnergy(src)).db);
+        } catch (e) {
+          notes.push(`energy analysis failed (${(e as Error).message.split("\n")[0]}); cut edges not snapped`);
+        }
+      }
+      if (removeSilences && info.hasAudio) {
         const det = await detectSilencesDetailed(src, { thresholdDb: a.thresholdDb, minDuration: minSilence });
         const lv = det.levels;
         notes.push(
@@ -314,9 +349,13 @@ export function createServer(): McpServer {
         fillerWords: a.fillerWords,
         tightness,
         padding: a.padding,
+        keepPause: a.keepPause,
         minKeep: a.minKeep,
         manualCuts: a.manualCuts,
+        energy: fine,
+        levels: fineLevels,
       });
+      notes.push(`pauses shortened to ~${a.keepPause ?? TIGHTNESS[tightness].keepPause}s (not removed)`);
       const options = { ...a, path: src, tightness };
       const stored = savePlan(plan, options, transcriptPath);
       const sum = summarizePlan(plan);
@@ -390,13 +429,23 @@ export function createServer(): McpServer {
     "make_captions",
     {
       description:
-        "Create captions from the transcript and add them to the active editor. Pass planId to time captions to the CUT edit (use the same plan you applied), or path for an uncut file. Writes .srt, .vtt and .ass files. Styles: clean (white with outline), bold-pop (big uppercase, active word highlighted), minimal (small boxed).",
+        "Create captions from the transcript and add them to the active editor. Pass planId to time captions to the CUT edit (use the same plan you applied), or path for an uncut file. Writes .srt, .vtt and .ass files. " +
+          "Pass `aspect` = the aspect you will render: line length, layout and the default style follow it (16:9 long-form: clean, one line <= 42 chars; 9:16 short-form: bold-pop, <= 3 words). " +
+          "Cues break at phrase boundaries (never after 'the', 'in', 'and'… when avoidable, no orphan words), stay 0.9–5 s and aim for <= 17 characters/second. Captions are kept off the speaker's face when face detection is available. " +
+          "Styles: clean (sentence case on soft boxes; the professional default), bold-pop (big uppercase, active word highlighted; for vertical shorts), minimal (small, quiet).",
       inputSchema: {
         planId: z.string().optional(),
         path: z.string().optional(),
-        style: z.enum(CAPTION_STYLES as [CaptionStyle, ...CaptionStyle[]]).optional().describe("Default bold-pop"),
-        maxWords: z.number().int().min(1).max(20).optional().describe("Max words per caption (default 6; use 3-4 for shorts)"),
-        maxChars: z.number().int().min(8).max(80).optional().describe("Max characters per caption (default 32)"),
+        aspect: z.enum(["16:9", "9:16", "1:1", "4:5"]).optional().describe("Aspect of the render these captions are for. Default: the source's aspect"),
+        style: z
+          .enum(CAPTION_STYLES as [CaptionStyle, ...CaptionStyle[]])
+          .optional()
+          .describe('Default by context: "clean" for 16:9 / long-form, "bold-pop" for 9:16 short-form (<= 3 min). Bold-pop on a calm interview looks cheap.'),
+        maxWords: z.number().int().min(1).max(20).optional().describe("Max words per caption (preset: 12 for 16:9, 3 for bold-pop)"),
+        maxChars: z.number().int().min(8).max(90).optional().describe("Max characters per caption (all lines)"),
+        maxCharsPerLine: z.number().int().min(8).max(60).optional().describe("Max characters per line (preset: 42 for 16:9, 22 for 9:16, 18 for bold-pop)"),
+        maxLines: z.number().int().min(1).max(2).optional().describe("Lines per caption (preset: 1 for 16:9 and bold-pop, 2 for 9:16 clean)"),
+        avoidFaces: z.boolean().optional().describe("Move captions off the speaker's face (needs macOS face detection). Default true"),
         model: modelSchema,
         language: languageSchema,
       },
@@ -409,21 +458,50 @@ export function createServer(): McpServer {
         src = plan.source;
       } else src = await sourcePath(a.path);
       const { transcript } = await transcribe(src, { model: a.model, language: a.language });
-      const cues = cuesFromTranscript(transcript, { maxWords: a.maxWords, maxChars: a.maxChars, plan });
-      if (!cues.length) throw new Error("No speech found to caption");
-      const style = a.style ?? "bold-pop";
       const info = await probe(src);
+      const srcAspect: CaptionAspect = info.width && info.height && info.height > info.width ? "9:16" : "16:9";
+      const aspect = (a.aspect ?? srcAspect) as CaptionAspect;
+      const editLen = plan ? editDuration(plan) : info.duration;
+      const baseStyle: CaptionStyle = a.style ?? defaultCaptionStyle(aspect, editLen);
+      const preset = captionPreset(aspect, baseStyle);
+      const cues = cuesFromTranscript(transcript, {
+        ...preset,
+        ...(a.maxWords !== undefined ? { maxWords: a.maxWords } : {}),
+        ...(a.maxChars !== undefined ? { maxChars: a.maxChars } : {}),
+        ...(a.maxCharsPerLine !== undefined ? { maxCharsPerLine: a.maxCharsPerLine } : {}),
+        ...(a.maxLines !== undefined ? { maxLines: a.maxLines } : {}),
+        plan,
+      });
+      if (!cues.length) throw new Error("No speech found to caption");
+      const notes: string[] = [];
+      if (baseStyle === "bold-pop" && aspect === "16:9") notes.push("bold-pop on 16:9 long-form usually reads as cheap; clean is the professional default");
+      // Keep captions off faces (uses the reframe face track when available; cached per file).
+      let style: string = baseStyle;
+      if (a.avoidFaces !== false && info.hasVideo) {
+        try {
+          const { detectFaces } = await import("../engine/reframe.js");
+          const faces = await detectFaces(src);
+          const vertical = aspect === "9:16" || aspect === "4:5";
+          const place = placeCaptions(faces, baseStyle, vertical);
+          if (place.position) style = `${baseStyle}:position=${place.position}`;
+          if (place.note) notes.push(place.note);
+        } catch (e) {
+          notes.push(`face check skipped (${(e as Error).message.split("\n")[0]})`);
+        }
+      }
       const stem = join(paths.captions(), `${basename(src, extname(src))}-${a.planId ?? "full"}`);
       const srtPath = `${stem}.srt`;
       writeFileSync(srtPath, toSRT(cues));
       writeFileSync(`${stem}.vtt`, toVTT(cues));
       writeFileSync(`${stem}.ass`, toASS(cues, { style, width: info.width, height: info.height }));
       const host = await activeHost();
-      if (host instanceof StandaloneHost) host.setCaptionStyle(style);
+      // The caption renderer accepts "style:position=…" specs.
+      if (host instanceof StandaloneHost) host.setCaptionStyle(style as CaptionStyle);
       const res = await host.addCaptions(cues, { srtPath });
-      const preview = cues.slice(0, 8).map((c) => `${fmt(c.start)} ${c.text}`).join("\n");
+      const preview = cues.slice(0, 8).map((c) => `${fmt(c.start)} ${c.text.replace(/\n/g, " / ")}`).join("\n");
       return text(
-        `${res.added} captions added in ${host.name} (style ${style}).\nFiles: ${srtPath}, ${stem}.vtt, ${stem}.ass\n\n${preview}${cues.length > 8 ? "\n…" : ""}`,
+        `${res.added} captions added in ${host.name} (style ${style}, for ${aspect}: <= ${preset.maxLines ?? 1} line(s) of ${preset.maxCharsPerLine} chars).` +
+          `${notes.length ? `\nNotes: ${notes.join("; ")}` : ""}\nFiles: ${srtPath}, ${stem}.vtt, ${stem}.ass\n\n${preview}${cues.length > 8 ? "\n…" : ""}`,
       );
     }),
   );
@@ -476,17 +554,21 @@ export function createServer(): McpServer {
     "auto_zooms",
     {
       description:
-        "Automatic zooms for a cut edit, placed on emphasis: sentence starts after pauses, emphasised words (numbers, \"never\", \"important\"…), exclamations, questions, and jump cuts. Framing alternates 100% / baseScale / scale with at least minGap seconds between changes. style \"punch\" = hard punch-in, \"smooth\" = eased ramp. Adds them to the active editor.",
+        "A FEW purposeful zooms for a cut edit, the way an editor uses them: (a) a hard change of framing exactly on a jump cut to disguise it (ending on a later cut when possible), " +
+          "(b) a push-in that lands a genuinely emphasised moment (a strong claim, a striking number, an exclamation). Sparse by design: long-form <= ~1 per 20 s at density \"normal\", never on adjacent segments or back-to-back. " +
+          "Scale defaults to 106/110% (long) or 108/112% (shorts) so 1080p stays sharp. Adds them to the active editor; call apply_cuts again first to clear earlier zooms.",
       inputSchema: {
         planId: z.string(),
-        style: z.enum(["punch", "smooth"]).optional().describe('Default "punch"'),
-        scale: z.number().min(101).max(200).optional().describe("Emphasis punch-in percent, default 115"),
-        baseScale: z.number().min(101).max(200).optional().describe("Normal punch-in percent, default 108"),
-        minGap: z.number().positive().optional().describe("Minimum seconds between framing changes, default 3"),
-        every: z.number().positive().optional().describe("Without a transcript: one framing change per this many seconds, default 6"),
+        aspect: z.enum(["16:9", "9:16", "1:1", "4:5"]).optional().describe("Aspect you will render: 9:16/4:5 = short-form pacing. Default: the source's aspect"),
+        density: z.enum(["subtle", "normal", "energetic"]).optional().describe('How many: subtle (~1/40 s long-form), normal (default, ~1/20 s), energetic (~1/10 s; shorts ~1/4 s)'),
+        style: z.enum(["punch", "smooth"]).optional().describe('Emphasis zooms: "smooth" eased push (default for long-form) or "punch" (default for shorts). Jump-cut zooms are always hard.'),
+        scale: z.number().min(101).max(200).optional().describe("Emphasis zoom percent, default 110 (long) / 112 (short). Above ~112% a 1080p source looks soft"),
+        baseScale: z.number().min(101).max(200).optional().describe("Jump-cut zoom percent, default 106 (long) / 108 (short)"),
+        minGap: z.number().positive().optional().describe("Minimum seconds between zoom starts (default from density)"),
+        every: z.number().positive().optional().describe("Only for an UNCUT clip without a transcript: one zoom every this many seconds"),
       },
     },
-    safe(async ({ planId, style, scale, baseScale, minGap, every }) => {
+    safe(async ({ planId, aspect, density, style, scale, baseScale, minGap, every }) => {
       const stored = loadPlan(planId);
       let transcript: Transcript | undefined;
       if (stored.transcriptPath) {
@@ -496,15 +578,72 @@ export function createServer(): McpServer {
           transcript = undefined;
         }
       }
-      const st = style ?? "punch";
-      const planned = planZooms(stored.plan, transcript, { style: st, levels: [baseScale ?? 108, scale ?? 115], minGap, every });
-      if (!planned.length) return text("No zoom moments found (edit too short?). Use add_zooms to place them by hand.");
+      const info = await probe(stored.plan.source);
+      const vertical = aspect ? aspect === "9:16" || aspect === "4:5" : !!(info.width && info.height && info.height > info.width);
+      const format = vertical ? "short" : "long";
+      const levels = scale || baseScale ? [baseScale ?? (format === "short" ? 108 : 106), scale ?? (format === "short" ? 112 : 110)] : undefined;
+      const planned = planZooms(stored.plan, transcript, { style, density: density as ZoomDensity | undefined, format, levels, minGap, every });
+      if (!planned.length) return text("No purposeful zoom moments found (no visible jump cuts or strong emphasis). That is fine: do not add zooms for their own sake; use add_zooms only for a moment you can justify.");
       const host = await activeHost();
       const added = await host.addZooms(planned.map(({ kind: _k, text: _t, ...z }) => z as ZoomSpec));
+      // Effective upscale: the output shows (source height / zoom) pixels at the output height (same as the source for a crop).
+      const warn = zoomWarnings(planned, { sourceHeight: info.height, outputHeight: info.height });
+      const hard = planned.filter((z) => !z.ease).length;
+      const mins = editDuration(stored.plan) / 60;
       return text(
-        `${added} ${st === "punch" ? "punch-ins" : "smooth (eased) zooms"} added in ${host.name}${transcript ? "" : " (no transcript: placed on jump cuts / every few seconds)"}:\n` +
-          planned.map((z) => `- ${fmt(z.start)}–${fmt(z.end)} ${z.scale}% ${z.kind}${z.text ? ` "${z.text.length > 50 ? `${z.text.slice(0, 47)}...` : z.text}"` : ""}`).join("\n"),
+        `${added} zooms added in ${host.name} (${hard} hard punch-ins on cuts, ${planned.length - hard} eased pushes; ${(planned.length / Math.max(mins, 0.01)).toFixed(1)}/min, ${format}-form ${density ?? "normal"}):\n` +
+          planned.map((z) => `- ${fmt(z.start)}–${fmt(z.end)} ${z.scale}% ${z.kind}${z.text ? ` ${z.text.length > 60 ? `${z.text.slice(0, 57)}...` : z.text}` : ""}`).join("\n") +
+          (warn.length ? `\nWARNINGS:\n${warn.map((w) => `- ${w}`).join("\n")}` : ""),
       );
+    }),
+  );
+
+  // ---------- review ----------
+  server.registerTool(
+    "review_edit",
+    {
+      description:
+        "Review a RENDERED edit like a senior editor. CALL THIS AFTER EVERY render, look at the images, and fix every WARNING (re-plan cuts, re-caption, fewer/smaller zooms, loudnorm) and re-render BEFORE reporting to the user. " +
+          "Returns a contact sheet (frames 0.3 s before/after cuts and at regular intervals: check jump cuts, zoom framing, captions over faces, caption line breaks), " +
+          "a waveform with joins/zooms marked plus 1 s close-ups of joins (check breaths kept, no clipped word tails), and stats: duration vs plan, cuts/min, shortest keep, pauses at joins, longest remaining pause, " +
+          "words cut mid-word, zooms/min, caption reading speed and line quality, LUFS / true peak, clipping, black or frozen frames.",
+      inputSchema: {
+        path: z.string().describe("The rendered file"),
+        planId: z.string().optional().describe("The plan it was rendered from (default: the standalone timeline's plan)"),
+      },
+    },
+    safe(async ({ path, planId }) => {
+      const out = resolveMediaPath(path);
+      const sa = getHost("standalone") as StandaloneHost;
+      const proj = sa.getProject();
+      let plan: CutPlan | undefined;
+      let transcript: Transcript | undefined;
+      if (planId) {
+        const stored = loadPlan(planId);
+        plan = stored.plan;
+        if (stored.transcriptPath) {
+          try {
+            transcript = JSON.parse(readFileSync(stored.transcriptPath, "utf8")) as Transcript;
+          } catch {
+            transcript = undefined;
+          }
+        }
+      } else if (proj.plan) plan = proj.plan;
+      const same = !!plan && !!proj.plan && proj.plan.source === plan.source && JSON.stringify(proj.plan.keep) === JSON.stringify(plan.keep);
+      const r = await reviewEdit(out, {
+        plan,
+        transcript,
+        zooms: same ? proj.zooms : undefined,
+        captions: same ? proj.captions : undefined,
+      });
+      const content: ToolResult["content"] = [];
+      if (r.sheet) content.push({ type: "image", data: r.sheet.toString("base64"), mimeType: "image/jpeg" });
+      if (r.wave) content.push({ type: "image", data: r.wave.toString("base64"), mimeType: "image/png" });
+      content.push({
+        type: "text",
+        text: `${formatReview(r, out)}${r.sheetPath ? `\nContact sheet: ${r.sheetPath}` : ""}${r.wavePath ? `\nWaveform: ${r.wavePath}` : ""}`,
+      });
+      return { content };
     }),
   );
 
@@ -664,7 +803,7 @@ export function createServer(): McpServer {
       writeInterchange(format, input, output);
       let srt: string | undefined;
       if (format !== "srt" && format !== "fcpxml" && captions.length) {
-        srt = output.replace(/\.[^.]+$/, "") + ".srt";
+        srt = sidecarPath(output, ".srt");
         writeFileSync(srt, toSRT(captions));
       }
       const how: Record<InterchangeFormat, string> = {
@@ -843,5 +982,7 @@ export async function runServer(): Promise<void> {
   const server = createServer();
   await autoStartStudio(VERSION);
   await server.connect(new StdioServerTransport());
+  // Client gone or signalled: kill running ffmpeg/whisper/HyperFrames instead of orphaning them.
+  installShutdownHandlers();
   process.stderr.write(`openedit MCP server ${VERSION} ready on stdio\n`);
 }

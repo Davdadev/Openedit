@@ -67,7 +67,9 @@ describe("cut merging", () => {
 });
 
 describe("buildCutPlan", () => {
-  it("pads silences, drops tiny keeps and handles edges", () => {
+  it("shortens pauses, merges short pieces instead of dropping them, and handles edges", () => {
+    // Updated: the old behaviour DROPPED the 0.4 s piece between two pauses (it may hold speech).
+    // Now the shorter adjacent pause is restored instead, and the last word gets a 0.45 s ring-out.
     const plan = buildCutPlan({
       source: "/x.mp4",
       duration: 10,
@@ -80,24 +82,24 @@ describe("buildCutPlan", () => {
       padding: 0.1,
       minKeep: 0.5,
     });
-    // Sliver between the two middle silences (4.9–5.3 = 0.4s) is below minKeep 0.5 and gets dropped.
     expect(plan.keep).toEqual([
-      { start: 0.9, end: 3.1 },
-      { start: 5.9, end: 9.1 },
+      { start: 0.88, end: 3.1 },
+      { start: 4.9, end: 9.45 },
     ]);
     expect(plan.cuts.map((c) => [c.start, c.end, c.reason])).toEqual([
-      [0, 0.9, "silence"],
-      [3.1, 5.9, "silence"],
-      [9.1, 10, "silence"],
+      [0, 0.88, "silence"],
+      [3.1, 4.9, "silence"],
+      [9.45, 10, "silence"],
     ]);
     const sum = summarizePlan(plan);
-    expect(sum.editedDuration).toBeCloseTo(5.4, 3);
-    expect(sum.timeSaved).toBeCloseTo(4.6, 3);
+    expect(sum.editedDuration).toBeCloseTo(6.77, 3);
     expect(sum.cutsByReason.silence.count).toBe(3);
   });
 
-  it("removes filler words (single and multi-word) and manual cuts", () => {
-    const t = tr("so@0-0.3 um@0.5-0.8 we@1-1.2 you@1.3-1.4 know@1.4-1.6 ship@1.8-2.2 it@2.2-2.4|", 3);
+  it("removes hesitations, isolated phrase fillers and manual cuts, keeping a natural pause", () => {
+    // Updated: "you know" now needs commas/pauses around it, and the cut keeps a short beat
+    // around the removed words instead of butting the neighbours together.
+    const t = tr("so@0-0.3 um@0.5-0.8 we,@1-1.2 you@1.5-1.6 know,@1.6-1.8 ship@2.2-2.5 it@2.5-2.7|", 3);
     expect(detectFillers(t, ["um", "you know"]).map((c) => c.label)).toEqual(["um", "you know"]);
     const plan = buildCutPlan({
       source: "/x.mp4",
@@ -105,15 +107,17 @@ describe("buildCutPlan", () => {
       transcript: t,
       removeFillers: true,
       fillerWords: ["um", "you know"],
-      manualCuts: [{ start: 2.5, end: 3, label: "tail" }],
+      manualCuts: [{ start: 2.85, end: 3, label: "tail" }],
       minKeep: 0.1,
     });
     expect(plan.keep).toEqual([
-      { start: 0, end: 0.5 },
-      { start: 0.8, end: 1.3 },
-      { start: 1.6, end: 2.5 },
+      { start: 0, end: 0.384 },
+      { start: 0.898, end: 1.392 },
+      { start: 2.072, end: 2.85 },
     ]);
     expect(plan.cuts.map((c) => c.reason)).toEqual(["filler", "filler", "manual"]);
+    // The removed words are entirely inside cuts; kept words entirely inside keeps.
+    for (const k of plan.keep) expect(k.end - k.start).toBeGreaterThan(0.3);
   });
 
   it("clips cuts to the media duration", () => {
@@ -181,8 +185,9 @@ describe("captions", () => {
     6,
   );
   it("groups words into cues by sentence, word count and gaps", () => {
+    // Updated: the old output left "going" as an orphan cue and ended a cue on "that".
     const cues = cuesFromTranscript(t, { maxWords: 4 });
-    expect(cues.map((c) => c.text)).toEqual(["Hello there.", "This is a really", "long sentence that keeps", "going"]);
+    expect(cues.map((c) => c.text)).toEqual(["Hello there.", "This is a really", "long sentence", "that keeps going"]);
     expect(cues[0].start).toBe(0);
     expect(cues[0].end).toBeLessThanOrEqual(cues[1].start);
     for (let i = 1; i < cues.length; i++) expect(cues[i].start).toBeGreaterThanOrEqual(cues[i - 1].end);
@@ -310,11 +315,12 @@ describe("whisper JSON parsing", () => {
 describe("render graph", () => {
   const info = { path: "/in.mp4", duration: 10, width: 1920, height: 1080, fps: 30, hasAudio: true, hasVideo: true };
   const plan: CutPlan = { source: "/in.mp4", duration: 10, keep: [{ start: 0, end: 2 }, { start: 4, end: 7.5 }], cuts: [] };
-  it("trims, fades and concatenates kept ranges", () => {
+  it("trims, crossfades audio and concatenates kept ranges", () => {
     const g = buildRenderGraph(plan, info, {});
     expect(g.graph).toContain("[0:v:0]trim=start=0:end=2,setpts=PTS-STARTPTS[v0]");
-    expect(g.graph).toContain("[0:a:0]atrim=start=4:end=7.5,asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.01,afade=t=out:st=3.49:d=0.01[a1]");
-    expect(g.graph).toContain("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vcat][acat]");
+    expect(g.graph).toContain("[0:a:0]atrim=start=3.98:end=7.5,asetpts=PTS-STARTPTS,afade=t=out:st=3.51:d=0.01[a1]");
+    expect(g.graph).toContain("[v0][v1]concat=n=2:v=1:a=0[vcat]");
+    expect(g.graph).toContain("[a0][a1]acrossfade=d=0.04:c1=qsin:c2=qsin[acat]");
     expect(g.duration).toBe(5.5);
     expect(g.maps).toEqual(["-map", "[vout]", "-map", "[aout]"]);
   });

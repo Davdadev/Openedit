@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { probeSourceDetails, writeInterchange } from "../engine/interchange.js";
+import { trackChild } from "../engine/exec.js";
 import { probe } from "../engine/media.js";
 import { paths } from "../engine/paths.js";
 import { newRequestId, unwrap } from "./bridge.js";
@@ -27,6 +28,9 @@ export function repoRoot(): string {
 export function resolveBridgePath(): string {
   return process.env.OPENEDIT_RESOLVE_BRIDGE || join(repoRoot(), "resolve", "openedit_bridge.py");
 }
+
+/** Commands that are safe to repeat when the persistent bridge dies mid-request. */
+const READ_ONLY = new Set<BridgeCommand>(["ping", "status", "getTimeline", "getSourceMedia"]);
 
 interface Pending {
   resolve: (line: string) => void;
@@ -57,6 +61,7 @@ export class BridgeServer {
 
   private start(): ChildProcessWithoutNullStreams {
     const child = spawn(this.python, [this.script, "--serve"], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    trackChild(child);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (d: string) => {
       this.buf += d;
@@ -176,9 +181,15 @@ export class ResolveHost implements EditorHost {
         const msg = (e as Error).message;
         // Timeouts are real answers; start-up/crash problems fall back to one-shot.
         if (/timed out/.test(msg)) throw e;
-        if (/Could not start/.test(msg)) this.persistentBroken = true;
+        const couldNotStart = /Could not start/.test(msg);
+        if (couldNotStart) this.persistentBroken = true;
         this.server?.stop();
         this.server = null;
+        // The bridge died while running an editing command: Resolve may already have done it
+        // (a timeline built, clips placed), so re-running it one-shot could duplicate the edit.
+        if (!couldNotStart && !READ_ONLY.has(cmd)) {
+          throw new Error(`${msg} The ${cmd} command may have partly run in Resolve; check the project before retrying.`);
+        }
       }
     }
     raw ??= await this.oneShot(python, script, request, cmd, limit);
@@ -188,6 +199,7 @@ export class ResolveHost implements EditorHost {
   private oneShot(python: string, script: string, request: string, cmd: BridgeCommand, limit: number): Promise<string> {
     return new Promise<string>((ok, fail) => {
       const child = spawn(python, [script], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+      trackChild(child);
       let out = "";
       let err = "";
       const timer = limit

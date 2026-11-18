@@ -7,6 +7,15 @@ import { fileURLToPath } from "node:url";
 import { openeditHome } from "../engine/paths.js";
 import { ensureToken } from "../hosts/premiere.js";
 import type { StudioEvent } from "./events.js";
+import { timingSafeEqual } from "node:crypto";
+
+/** Constant-time token check, so the token can't be guessed byte by byte from response timing. */
+function tokenMatches(given: string | string[] | undefined, token: string): boolean {
+  if (typeof given !== "string") return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 export const STUDIO_DEFAULT_PORT = 47822;
 export const STUDIO_APP_ID = "openedit-studio";
@@ -101,12 +110,54 @@ function eventPaths(evt: StudioEvent): string[] {
   return out.filter((p) => typeof p === "string").map((p) => p.replace(/^~(?=\/)/, homedir()));
 }
 
+/** Replace absolute paths in free text by their file name. */
+function scrubPaths(text: string | undefined): string | undefined {
+  if (typeof text !== "string") return undefined;
+  return text.replace(/(?<![\w.~])(?:~|[A-Za-z]:)?[\\/](?:[^\s"'`<>|]*[\\/])?([^\s"'`<>|\\/]*)/g, (m, name: string) => (/[\\/]/.test(m) ? name : m));
+}
+
+/**
+ * What a page on another origin may see: just enough for the injectable overlay (titles,
+ * progress, target labels/selectors). Never paths, arguments, outputs, transcripts or captions:
+ * /events is CORS-open so the overlay works on any site, which also means any site can read it.
+ */
+export function redactForCrossOrigin(e: StudioEvent): StudioEvent | undefined {
+  const base = { at: e.at, seq: e.seq };
+  switch (e.type) {
+    case "tool_start":
+      return {
+        ...base,
+        type: "tool_start",
+        id: e.id,
+        tool: e.tool,
+        title: e.title,
+        target: e.target ? { kind: e.target.kind, label: scrubPaths(e.target.label) ?? "", ...(e.target.selector ? { selector: e.target.selector } : {}) } : undefined,
+      };
+    case "progress":
+      return { ...base, type: "progress", id: e.id, fraction: e.fraction, detail: scrubPaths(e.detail) };
+    case "tool_end":
+      return { ...base, type: "tool_end", id: e.id, tool: e.tool, ok: e.ok, ms: e.ms, summary: scrubPaths(e.summary) };
+    case "session":
+      return { ...base, type: "session", session: e.session, version: e.version };
+    default:
+      return undefined;
+  }
+}
+
+/** Files /media never serves even inside an allowed folder (bridge token, API keys, page code). */
+const MEDIA_DENY_EXT = new Set([".html", ".htm", ".js", ".mjs", ".css", ".xhtml"]);
+function mediaServable(file: string): boolean {
+  const name = file.split(sep).pop() ?? "";
+  if (name.startsWith(".") || name === "token") return false;
+  return !MEDIA_DENY_EXT.has(extname(name).toLowerCase());
+}
+
 export async function startStudioServer(opts: StudioServerOptions = {}): Promise<StudioServer> {
   const host = opts.host ?? "127.0.0.1";
   const token = opts.token ?? ensureToken();
   const root = webRoot();
   const buffer: StudioEvent[] = [];
-  const clients = new Set<ServerResponse>();
+  const clients = new Map<ServerResponse, { redact: boolean }>();
   const allowed = new Set<string>();
   const allowDirs = [openeditHome(), join(homedir(), "OpenEdit Media"), ...(opts.allowDirs ?? [])]
     .map((d) => real(d) ?? resolve(d))
@@ -129,13 +180,28 @@ export async function startStudioServer(opts: StudioServerOptions = {}): Promise
       buffer.splice(i < 0 || buffer.length > REPLAY * 2 ? 0 : i, 1);
     }
     const line = `id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`;
-    for (const c of clients) c.write(line);
+    const red = redactForCrossOrigin(e);
+    const redLine = red ? `id: ${e.seq}\ndata: ${JSON.stringify(red)}\n\n` : undefined;
+    for (const [c, o] of clients) {
+      if (!o.redact) c.write(line);
+      else if (redLine) c.write(redLine);
+    }
   };
 
   const okHost = (req: IncomingMessage) => {
     // DNS-rebinding guard: only accept loopback Host headers.
     const h = (req.headers.host ?? "").replace(/:\d+$/, "");
     return h === "127.0.0.1" || h === "localhost" || h === "[::1]";
+  };
+
+  /** A request made by a page on another origin (the overlay injected into some site, or any site at all). */
+  const crossOrigin = (req: IncomingMessage) => {
+    const o = req.headers.origin;
+    if (o === undefined) {
+      const site = req.headers["sec-fetch-site"];
+      return site !== undefined && site !== "same-origin" && site !== "none";
+    }
+    return o !== `http://127.0.0.1:${port}` && o !== `http://localhost:${port}` && o !== `http://[::1]:${port}`;
   };
 
   const send = (res: ServerResponse, status: number, body: string | object, type = "application/json") => {
@@ -207,9 +273,11 @@ export async function startStudioServer(opts: StudioServerOptions = {}): Promise
         "access-control-allow-private-network": "true",
       });
       res.write("retry: 1000\n\n");
-      const replay = buffer.map((e) => ({ ...e, replay: true }));
+      const redact = crossOrigin(req);
+      const visible = redact ? buffer.map(redactForCrossOrigin).filter((e): e is StudioEvent => !!e) : buffer;
+      const replay = visible.map((e) => ({ ...e, replay: true }));
       res.write(`event: replay\ndata: ${JSON.stringify(replay)}\n\n`);
-      clients.add(res);
+      clients.set(res, { redact });
       const ping = setInterval(() => res.write(": ping\n\n"), 15000);
       req.on("close", () => {
         clearInterval(ping);
@@ -219,7 +287,7 @@ export async function startStudioServer(opts: StudioServerOptions = {}): Promise
     }
 
     if (path === "/emit" && req.method === "POST") {
-      if (req.headers["x-openedit-token"] !== token) return send(res, 401, { error: "bad token" });
+      if (!tokenMatches(req.headers["x-openedit-token"], token)) return send(res, 401, { error: "bad token" });
       try {
         const body = JSON.parse(await readBody(req)) as StudioEvent | StudioEvent[];
         const list = Array.isArray(body) ? body : [body];
@@ -236,7 +304,9 @@ export async function startStudioServer(opts: StudioServerOptions = {}): Promise
       if (!r || !statSync(r).isFile()) return send(res, 404, { error: "not found" });
       const ok = allowed.has(r) || allowDirs.some((d) => r.startsWith(d));
       if (!ok) return send(res, 403, { error: "path not produced by this session" });
-      return serveFile(req, res, r);
+      if (!mediaServable(r)) return send(res, 403, { error: "not a media file" });
+      // Downloaded media may be SVG/HTML-ish: never let it run script in the studio's origin.
+      return serveFile(req, res, r, { "content-security-policy": "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'", "x-content-type-options": "nosniff" });
     }
 
     // Static assets (index, css, js, overlay).
@@ -279,7 +349,7 @@ export async function startStudioServer(opts: StudioServerOptions = {}): Promise
     server,
     close: () =>
       new Promise<void>((ok) => {
-        for (const c of clients) c.end();
+        for (const c of clients.keys()) c.end();
         clients.clear();
         server.close(() => ok());
       }),

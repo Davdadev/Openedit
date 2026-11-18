@@ -34,6 +34,11 @@ export interface MediaInfo {
   fps?: number;
   /** ffprobe codec_name of the main video stream, e.g. "h264", "vp9", "av1". */
   videoCodec?: string;
+  /**
+   * Display rotation in degrees (phone video). width/height are already the DISPLAYED size
+   * (swapped for ±90°), matching the frames ffmpeg decodes with its default autorotate.
+   */
+  rotation?: number;
   hasAudio: boolean;
   hasVideo: boolean;
 }

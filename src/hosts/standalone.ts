@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { type CaptionStyle, toASS, toSRT } from "../engine/captions.js";
 import { mediaKind, probe, resolveMediaPath } from "../engine/media.js";
-import { paths } from "../engine/paths.js";
+import { paths, sidecarPath } from "../engine/paths.js";
 import { editDuration, editSegments } from "../engine/remap.js";
 import { planReframe, type ReframeMode } from "../engine/reframe.js";
 import {
@@ -94,6 +94,9 @@ export interface StandaloneRenderOptions {
   quality?: RenderQuality;
 }
 
+/** Temporary sibling of a cache file, keeping its extension (the renderer picks the format from it). */
+const partName = (file: string) => file.replace(/(\.[^./\\]*)?$/, (ext) => `.${process.pid}-${randomBytes(4).toString("hex")}.part${ext}`);
+
 const hash = (v: unknown) => createHash("sha1").update(JSON.stringify(v)).digest("hex").slice(0, 16);
 
 function emptyProject(): StandaloneProject {
@@ -124,7 +127,11 @@ export class StandaloneHost implements EditorHost {
 
   private save(): void {
     mkdirSync(dirname(this.projectFile), { recursive: true });
-    writeFileSync(this.projectFile, JSON.stringify(this.project, null, 1));
+    // Atomic replace: a crash or full disk mid-write must not truncate the timeline (load() would
+    // then silently start an empty project).
+    const tmp = `${this.projectFile}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(this.project, null, 1));
+    renameSync(tmp, this.projectFile);
   }
 
   /** Snapshot of the project state (for tools and tests). */
@@ -375,7 +382,7 @@ export class StandaloneHost implements EditorHost {
     let srt: string | undefined;
     const wantCaptions = (opts.burnCaptions ?? true) && p.captions.length > 0 && info.hasVideo;
     if (p.captions.length) {
-      srt = output.replace(/\.[^.]+$/, "") + ".srt";
+      srt = sidecarPath(output, ".srt");
       writeFileSync(srt, toSRT(p.captions));
     }
     if (wantCaptions) {
@@ -391,15 +398,23 @@ export class StandaloneHost implements EditorHost {
       else {
         try {
           const motion = await loadMotion();
-          const r = await motion.renderCaptionOverlay({
-            cues: p.captions,
-            style: p.captionStyle,
-            output: cached,
-            width: size.width,
-            height: size.height,
-            fps: capFps,
-          });
-          captionOverlay = r.output;
+          // Render beside the cache entry and rename on success: a killed/failed render must not
+          // leave a partial file that every later render would pick up as cached.
+          const part = partName(cached);
+          try {
+            const r = await motion.renderCaptionOverlay({
+              cues: p.captions,
+              style: p.captionStyle,
+              output: part,
+              width: size.width,
+              height: size.height,
+              fps: capFps,
+            });
+            renameSync(r.output, cached);
+            captionOverlay = cached;
+          } finally {
+            rmSync(part, { force: true });
+          }
         } catch (e) {
           overlayError = (e as Error).message.split("\n")[0];
         }
@@ -473,16 +488,22 @@ export class StandaloneHost implements EditorHost {
       if (existsSync(target)) return { path: target, fit: "cover" };
       try {
         const motion = await loadMotion();
-        const r = await motion.renderTemplate({
-          template: m.template,
-          params: m.params,
-          output: target,
-          width: out.width,
-          height: out.height,
-          fps: m.fps ?? fps,
-          duration: m.duration,
-        });
-        return { path: r.output, fit: "cover" };
+        const part = partName(target);
+        try {
+          const r = await motion.renderTemplate({
+            template: m.template,
+            params: m.params,
+            output: part,
+            width: out.width,
+            height: out.height,
+            fps: m.fps ?? fps,
+            duration: m.duration,
+          });
+          renameSync(r.output, target);
+        } finally {
+          rmSync(part, { force: true });
+        }
+        return { path: target, fit: "cover" };
       } catch (e) {
         warnings.push(`Could not re-render ${m.template} at ${out.width}x${out.height} (${(e as Error).message.split("\n")[0]}); fitted the original.`);
       }

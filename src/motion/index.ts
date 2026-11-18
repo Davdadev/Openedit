@@ -17,6 +17,7 @@ import { createRequire } from "node:module";
 import { availableParallelism, cpus, tmpdir, totalmem } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { currentSignal, killChild, trackChild } from "../engine/exec.js";
 import type { CaptionCue, Word } from "../hosts/types.js";
 
 /** Pinned HyperFrames CLI used through `npx` when no local install is found. */
@@ -210,12 +211,23 @@ function hyperframesCommand(): Cmd {
 
 function run(cmd: string, args: string[], opts: { cwd?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<{ code: number; out: string }> {
   return new Promise((res, rej) => {
+    const signal = currentSignal();
+    if (signal?.aborted) return rej(new Error(`${cmd} cancelled`));
+    // Own process group on POSIX so a timeout/cancel/shutdown also kills HyperFrames' Chrome workers.
+    const group = process.platform !== "win32";
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32",
+      detached: group,
     });
+    trackChild(child, group);
+    const onAbort = () => {
+      killChild(child);
+      rej(new Error(`${cmd} cancelled`));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     let out = "";
     const keep = (b: Buffer) => {
       out += b.toString();
@@ -225,16 +237,18 @@ function run(cmd: string, args: string[], opts: { cwd?: string; timeoutMs?: numb
     child.stderr.on("data", keep);
     const timer = opts.timeoutMs
       ? setTimeout(() => {
-          child.kill("SIGKILL");
+          killChild(child);
           rej(new Error(`${cmd} timed out after ${opts.timeoutMs} ms\n${out.slice(-4000)}`));
         }, opts.timeoutMs)
       : null;
     child.on("error", (e) => {
       if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       rej(e);
     });
     child.on("close", (code) => {
       if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       res({ code: code ?? 1, out });
     });
   });
@@ -376,26 +390,49 @@ function normalizeCues(cues: CaptionCue[]): CaptionCue[] {
     .map((c) => ({
       start: c.start,
       end: c.end,
-      text: String(c.text).replace(/\s+/g, " ").trim(),
+      // "\n" in the text is an intended line break: keep it, collapse other whitespace.
+      text: String(c.text)
+        .split(/\r?\n/)
+        .map((l) => l.replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join("\n"),
       words: c.words?.filter((w) => w && String(w.text ?? "").trim() && w.end >= w.start),
     }))
     .sort((a, b) => a.start - b.start);
 }
 
-/** Word timings for a cue: given words, or synthesized proportional to length. */
-export function cueWords(c: CaptionCue): Word[] {
-  if (c.words && c.words.length) return c.words.map((w) => ({ text: String(w.text).trim(), start: w.start, end: w.end }));
-  const parts = c.text.split(/\s+/).filter(Boolean);
+/** A caption word; `br` = a line break follows it (from "\n" in the cue text). */
+export type CueWord = Word & { br?: boolean };
+
+/** Word timings for a cue: given words, or synthesized proportional to length. Line breaks in the text are marked with `br`. */
+export function cueWords(c: CaptionCue): CueWord[] {
+  const lines = c.text.split("\n").map((l) => l.split(/\s+/).filter(Boolean));
+  // Word index after which each line ends (the last line needs no break).
+  const breaks = new Set<number>();
+  let n = 0;
+  for (const l of lines.slice(0, -1)) {
+    n += l.length;
+    if (l.length) breaks.add(n - 1);
+  }
+  const mark = (ws: CueWord[]): CueWord[] => {
+    // Only trust the breaks when the words line up with the text.
+    if (breaks.size && ws.length === lines.reduce((a, l) => a + l.length, 0)) breaks.forEach((i) => (ws[i]!.br = true));
+    return ws;
+  };
+  if (c.words && c.words.length) return mark(c.words.map((w) => ({ text: String(w.text).trim(), start: w.start, end: w.end })));
+  const parts = lines.flat();
   const weights = parts.map((p) => p.length + 2);
   const total = weights.reduce((a, b) => a + b, 0) || 1;
   const span = c.end - c.start;
   let acc = c.start;
-  return parts.map((p, i) => {
-    const d = (span * weights[i]!) / total;
-    const w = { text: p, start: acc, end: acc + d };
-    acc += d;
-    return w;
-  });
+  return mark(
+    parts.map((p, i) => {
+      const d = (span * weights[i]!) / total;
+      const w = { text: p, start: acc, end: acc + d };
+      acc += d;
+      return w;
+    }),
+  );
 }
 
 export async function renderCaptionOverlay(o: {
@@ -427,7 +464,11 @@ export async function renderCaptionOverlay(o: {
         accent,
         font: spec.font ?? (spec.name === "bold-pop" ? "Montserrat" : "Inter"),
         background: "#000000",
-        pages: paginate(cues, spec.name).map((pg) => ({ start: pg.start, end: pg.end, words: pg.words.map((w) => ({ text: w.text, start: w.start, end: w.end })) })),
+        pages: paginate(cues, spec.name).map((pg) => ({
+          start: pg.start,
+          end: pg.end,
+          words: pg.words.map((w) => ({ text: w.text, start: w.start, end: w.end, ...(w.br ? { br: true } : {}) })),
+        })),
       };
       const html = compose(fragment, params, { width, height, fps, duration, opaque: format === "mp4" });
       await renderHtml(html, out, fps);
@@ -438,7 +479,8 @@ export async function renderCaptionOverlay(o: {
   }
 
   // Fallback: ASS subtitles burned onto a transparent canvas with ffmpeg/libass.
-  const assPath = out.replace(/\.[^.]+$/, "") + ".ass";
+  // Replace only the file extension (a dot in a folder name must not be treated as one).
+  const assPath = out.replace(/\.[^./\\]*$/, "") + ".ass";
   writeFileSync(assPath, buildAss(cues, spec, { width, height, accent }));
   try {
     await burnAss(assPath, out, { width, height, fps, duration, format });
@@ -480,38 +522,59 @@ function assEscape(s: string): string {
 }
 
 interface Page {
-  words: Word[];
+  words: CueWord[];
   start: number;
   end: number;
 }
 
+/** Page limits per style: [max words per line, max chars per line]. */
+const PAGE_LIMITS: Record<string, [number, number]> = {
+  "bold-pop": [3, 18],
+  karaoke: [7, 38],
+  clean: [14, 64],
+  minimal: [8, 44],
+};
+
+/**
+ * True when a cue can be shown as it is: at most two lines (its own "\n" breaks), each within
+ * the style's word and character limits. Such a cue is never re-split; the caption builder
+ * already chose phrase-aware breaks. bold-pop accepts up to 24 chars (its 16:9 preset).
+ */
+export function cueFits(c: CaptionCue, style: string): boolean {
+  const [maxWords, maxChars] = PAGE_LIMITS[style] ?? [7, 40];
+  const charLimit = style === "bold-pop" ? Math.max(maxChars, 24) : maxChars;
+  const lines = c.text.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length || lines.length > 2) return false;
+  return lines.every((l) => l.length <= charLimit && l.split(/\s+/).length <= maxWords);
+}
+
 /** Split cues into on-screen pages (same rules as the HTML caption composition). */
 export function paginate(cues: CaptionCue[], style: string): Page[] {
-  const lim: Record<string, [number, number]> = {
-    "bold-pop": [3, 18],
-    karaoke: [7, 38],
-    clean: [14, 64],
-    minimal: [8, 44],
-  };
-  const [maxWords, maxChars] = lim[style] ?? [7, 40];
+  const [maxWords, maxChars] = PAGE_LIMITS[style] ?? [7, 40];
   const pages: Page[] = [];
   for (const c of cues) {
     const local: Page[] = [];
-    let cur: Word[] = [];
-    let chars = 0;
-    const flush = () => {
-      if (cur.length) local.push({ words: cur, start: cur[0]!.start, end: c.end });
-      cur = [];
-      chars = 0;
-    };
-    for (const w of cueWords(c)) {
-      const len = w.text.length + (cur.length ? 1 : 0);
-      if (cur.length && (cur.length >= maxWords || chars + len > maxChars)) flush();
-      cur.push(w);
-      chars += len;
-      if (/[.!?;:]$/.test(w.text) || (style === "bold-pop" && /,$/.test(w.text))) flush();
+    const all = cueWords(c);
+    if (cueFits(c, style)) {
+      if (all.length) local.push({ words: all, start: Math.min(all[0]!.start, c.start), end: c.end });
+    } else {
+      let cur: CueWord[] = [];
+      let chars = 0;
+      const flush = () => {
+        if (cur.length) local.push({ words: cur, start: cur[0]!.start, end: c.end });
+        cur = [];
+        chars = 0;
+      };
+      for (const w0 of all) {
+        const w: CueWord = { text: w0.text, start: w0.start, end: w0.end }; // re-split: the fitter wraps lines
+        const len = w.text.length + (cur.length ? 1 : 0);
+        if (cur.length && (cur.length >= maxWords || chars + len > maxChars)) flush();
+        cur.push(w);
+        chars += len;
+        if (/[.!?;:]$/.test(w.text) || (style === "bold-pop" && /,$/.test(w.text))) flush();
+      }
+      flush();
     }
-    flush();
     // Within a cue a page stays up until the next one starts; the first starts with the cue.
     if (local.length) local[0]!.start = Math.min(local[0]!.start, c.start);
     for (let i = 0; i < local.length - 1; i++) local[i]!.end = local[i + 1]!.start;
@@ -526,6 +589,11 @@ export function paginate(cues: CaptionCue[], style: string): Page[] {
   return pages;
 }
 
+/** Join ASS-escaped word tokens with spaces, or "\N" after a word that ends a line. */
+function assJoin(tokens: string[], words: CueWord[]): string {
+  return tokens.map((t, i) => t + (i === tokens.length - 1 ? "" : words[i]!.br ? "\\N" : " ")).join("");
+}
+
 export function buildAss(cues: CaptionCue[], spec: CaptionStyleSpec, o: { width: number; height: number; accent: string }): string {
   const { width: W, height: H, accent } = o;
   const u = Math.min(W, H) / 1080;
@@ -534,7 +602,7 @@ export function buildAss(cues: CaptionCue[], spec: CaptionStyleSpec, o: { width:
   const pos = spec.position ?? (spec.name === "bold-pop" ? "middle-low" : "bottom");
   const align = pos === "top" ? 8 : 2;
   const marginV =
-    pos === "top" ? Math.round(H * 0.08) : pos === "middle" ? Math.round(H * 0.45) : pos === "middle-low" ? Math.round(H * (portrait ? 0.3 : 0.18)) : Math.round(H * (portrait ? 0.2 : 0.08));
+    pos === "top" ? Math.round(H * 0.08) : pos === "middle" ? Math.round(H * 0.45) : pos === "middle-low" ? Math.round(H * (portrait ? 0.3 : 0.18)) : Math.round(H * (portrait ? 0.2 : 0.14));
   const marginH = Math.round(W * 0.08);
   const white = assColor("#FFFFFF");
   const black = assColor("#000000");
@@ -558,9 +626,8 @@ export function buildAss(cues: CaptionCue[], spec: CaptionStyleSpec, o: { width:
         const txt = words
           .map((t, j) =>
             j === i ? `{\\c${assColor(accent)}\\fscx118\\fscy118\\t(0,90,\\fscx108\\fscy108)}${t}{\\c${white}\\fscx100\\fscy100}` : t,
-          )
-          .join(" ");
-        ev(s, e, (i === 0 ? "{\\fad(60,0)}" : "") + txt);
+          );
+        ev(s, e, (i === 0 ? "{\\fad(60,0)}" : "") + assJoin(txt, pg.words));
       });
     } else if (spec.name === "karaoke") {
       let cursor = pg.start;
@@ -570,9 +637,9 @@ export function buildAss(cues: CaptionCue[], spec: CaptionStyleSpec, o: { width:
         cursor = w.start + dur;
         return (lead > 0.005 ? `{\\k${Math.round(lead * 100)}}` : "") + `{\\kf${Math.round(dur * 100)}}${words[i]}`;
       });
-      ev(pg.start, pg.end, `{\\fad(100,100)}` + parts.join(" "));
+      ev(pg.start, pg.end, `{\\fad(100,100)}` + assJoin(parts, pg.words));
     } else {
-      ev(pg.start, pg.end, `{\\fad(${spec.name === "clean" ? 140 : 200},120)}` + words.join(" "));
+      ev(pg.start, pg.end, `{\\fad(${spec.name === "clean" ? 140 : 200},120)}` + assJoin(words, pg.words));
     }
   }
   return [
@@ -605,9 +672,13 @@ async function ffmpegHasFilter(name: string): Promise<boolean> {
   }
 }
 
-function ffFilterPath(p: string): string {
-  // Escape for use inside a filtergraph option value.
-  return p.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'").replace(/,/g, "\\,");
+/**
+ * Escape a path for use as an UNQUOTED filtergraph option value (two levels: option parser,
+ * then graph parser). Quoting with '...' cannot protect a path that itself contains a quote.
+ */
+export function ffFilterPath(p: string): string {
+  const option = p.replace(/\\/g, "/").replace(/[\\:']/g, "\\$&");
+  return option.replace(/[\\'[\],;]/g, "\\$&");
 }
 
 async function burnAss(
@@ -621,7 +692,7 @@ async function burnAss(
   const opaque = o.format === "mp4";
   const src = `color=c=${opaque ? "black" : "black@0.0"}:s=${o.width}x${o.height}:r=${o.fps}:d=${o.duration}`;
   const alphaOpt = opaque ? "" : ":alpha=1";
-  const vf = `format=${opaque ? "yuv420p" : "yuva420p"},${filter}=filename='${ffFilterPath(assPath)}'${alphaOpt}`;
+  const vf = `format=${opaque ? "yuv420p" : "yuva420p"},${filter}=filename=${ffFilterPath(assPath)}${alphaOpt}`;
   const codec =
     o.format === "mov"
       ? ["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le", "-vendor", "apl0"]

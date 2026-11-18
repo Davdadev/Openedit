@@ -1,0 +1,32 @@
+{
+  "name": "openedit",
+  "displayName": "OpenEdit",
+  "version": "0.1.0",
+  "description": "Local, open-source AI video editing for Claude: the OpenEdit MCP server (transcript-driven cuts, captions, zooms, b-roll, stock media, reframe, loudness, render) for Premiere Pro, DaVinci Resolve or standalone ffmpeg, plus editing-craft skills and computer-use playbooks for Resolve and Premiere.",
+  "author": {
+    "name": "Davdadev",
+    "url": "https://github.com/Davdadev"
+  },
+  "homepage": "https://github.com/Davdadev/openedit",
+  "repository": "https://github.com/Davdadev/openedit",
+  "license": "GPL-2.0-only",
+  "keywords": [
+    "video",
+    "video-editing",
+    "mcp",
+    "premiere-pro",
+    "davinci-resolve",
+    "ffmpeg",
+    "captions",
+    "shorts",
+    "whisper"
+  ],
+  "mcpServers": {
+    "openedit": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/openedit-mcp.mjs"
+      ]
+    }
+  }
+}

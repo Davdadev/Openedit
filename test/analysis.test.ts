@@ -120,12 +120,19 @@ describe("transcript pauses (speech map)", () => {
 });
 
 describe("tightness presets", () => {
-  it("changes padding and minKeep", () => {
+  it("shorten a pause to keepPause (tail > head) instead of removing it", () => {
+    // Updated: presets used to leave 0.04–0.15 s symmetric padding (breathless); now they leave a beat.
     const silences = [{ start: 2, end: 3 }];
-    const loose = buildCutPlan({ source: "/x", duration: 5, silences, tightness: "loose" });
-    const tight = buildCutPlan({ source: "/x", duration: 5, silences, tightness: "tight" });
-    expect(loose.cuts[0]).toMatchObject({ start: 2.15, end: 2.85 });
-    expect(tight.cuts[0]).toMatchObject({ start: 2.04, end: 2.96 });
+    const kept = (t: "loose" | "normal" | "tight") => {
+      const c = buildCutPlan({ source: "/x", duration: 5, silences, tightness: t }).cuts[0];
+      return { tail: c.start - 2, head: 3 - c.end };
+    };
+    for (const t of ["loose", "normal", "tight"] as const) {
+      const k = kept(t);
+      expect(k.tail).toBeGreaterThan(k.head);
+      expect(k.tail + k.head).toBeCloseTo(TIGHTNESS[t].keepPause * 0.8, 2); // mid-phrase pause (no punctuation)
+    }
+    expect(kept("loose").tail).toBeGreaterThan(kept("tight").tail);
     expect(buildCutPlan({ source: "/x", duration: 5, silences, tightness: "tight", padding: 0.1 }).cuts[0].start).toBe(2.1);
     expect(TIGHTNESS.loose.minSilence).toBeGreaterThan(TIGHTNESS.tight.minSilence);
   });
@@ -213,21 +220,24 @@ describe("emphasis-aware zooms", () => {
     expect(emphasisWeight({ text: "table", start: 0, end: 1 })).toBe(0);
   });
 
-  it("finds sentence, emphasis and question moments", () => {
-    const kinds = new Set(zoomMoments(plan, t).map((m) => m.kind));
-    expect(kinds).toEqual(new Set(["sentence", "emphasis", "question"]));
+  it("finds only strong emphasis (no sentence starts, questions or small numbers)", () => {
+    // Updated: every sentence start and question used to be a zoom moment (slop).
+    const m = zoomMoments(plan, t);
+    expect(new Set(m.map((x) => x.kind))).toEqual(new Set(["emphasis"]));
+    expect(m.map((x) => x.text)).toEqual(["This is really important.", "We grew 300 percent."]);
   });
 
-  it("places spaced zooms with alternating levels, punch vs smooth", () => {
+  it("places few, spaced, eased zooms at 106–110% for long-form", () => {
+    // Updated: used to place >= 4 punch-ins at 108/115% in 30 s.
     const z = planZooms(plan, t, { minGap: 3 });
-    expect(z.length).toBeGreaterThanOrEqual(4);
-    for (let i = 1; i < z.length; i++) expect(z[i].start - z[i - 1].start).toBeGreaterThanOrEqual(3);
-    expect(z.every((x) => x.ease === 0)).toBe(true);
-    expect(new Set(z.map((x) => x.scale))).toEqual(new Set([108, 115]));
-    expect(z.some((x) => x.text === "300" && x.scale === 115)).toBe(true);
-    expect(z.every((x) => x.end - x.start <= 5 + 1e-9)).toBe(true);
-    const smoothZ = planZooms(plan, t, { style: "smooth" });
-    expect(smoothZ.every((x) => x.ease === 0.4)).toBe(true);
+    expect(z.length).toBeGreaterThanOrEqual(1);
+    expect(z.length).toBeLessThanOrEqual(2);
+    expect(z.every((x) => x.ease === 0.8)).toBe(true);
+    expect(z.every((x) => x.scale <= 110)).toBe(true);
+    expect(z.some((x) => x.text?.includes("300") && x.scale === 110)).toBe(true);
+    const punch = planZooms(plan, t, { style: "punch" });
+    expect(punch.every((x) => x.ease === 0)).toBe(true);
+    expect(planZooms(plan, t).length).toBe(1); // default spacing: ~1 per 20 s
   });
 
   it("works on an uncut clip without a transcript (periodic)", () => {

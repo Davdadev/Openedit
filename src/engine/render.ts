@@ -89,8 +89,10 @@ export interface RenderOptions {
   crf?: number;
   /** x264 preset, default "veryfast". */
   preset?: string;
-  /** Audio fade at each cut boundary to avoid clicks (s). Default 0.01. */
+  /** Audio fade-in/out at the very start and end of the edit (s). Default 0.01. */
   edgeFade?: number;
+  /** Audio crossfade at each join (s), equal-power; video stays a hard cut. Default 0.04. 0 = butt joins. */
+  crossfade?: number;
 }
 
 export interface RenderResult {
@@ -139,9 +141,14 @@ export function reframeSize(width: number, height: number, reframe?: Reframe): {
   return cropSize(width, height, reframe);
 }
 
-/** Escape a path for use as a filter option value inside a filtergraph. */
-function filterPath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/([:'\\,;[\]])/g, "\\$1");
+/**
+ * Escape a path for use as an (unquoted) filter option value inside a filtergraph.
+ * Two levels: the option parser (\\ : ') and then the graph parser (\\ ' [ ] , ;).
+ * Windows backslashes become forward slashes, which ffmpeg accepts.
+ */
+export function filterPath(p: string): string {
+  const option = p.replace(/\\/g, "/").replace(/[\\:']/g, "\\$&");
+  return option.replace(/[\\'[\],;]/g, "\\$&");
 }
 
 /** zoompan z-expression: 1 + sum of eased bumps over each zoom range. */
@@ -166,6 +173,69 @@ interface GraphInput {
   args: string[];
 }
 
+/**
+ * Crossfade length (s) for each join between consecutive kept ranges: the requested
+ * length, shortened so it never exceeds either neighbouring keep and so the half-length
+ * extensions stay inside the source. Snapped to 2 ms so half of it is a whole millisecond
+ * (keeps the edit duration exact after rounding). 0 = plain butt join. Pure.
+ */
+export function joinCrossfades(keep: { start: number; end: number }[], sourceDuration: number, crossfade = 0.04): number[] {
+  const out: number[] = [];
+  const srcEnd = sourceDuration > 0 ? sourceDuration : Infinity;
+  for (let j = 0; j < keep.length - 1; j++) {
+    const a = keep[j];
+    const b = keep[j + 1];
+    if (b.start - a.end < 0.001) {
+      out.push(0); // contiguous: nothing was cut, so nothing to hide
+      continue;
+    }
+    let d = Math.min(crossfade, a.end - a.start, b.end - b.start, 2 * (srcEnd - a.end), 2 * b.start);
+    d = Math.floor(Math.max(0, d) * 500 + 1e-6) / 500;
+    out.push(d >= 0.004 ? d : 0);
+  }
+  return out;
+}
+
+/**
+ * Audio filter lines for the kept ranges joined by short crossfades. Each keep's audio
+ * is extended by half the crossfade on each joined side, so source time keep[i].start
+ * still lands at the edited time sum(len of keeps before i) and the total length equals
+ * the plan's edit duration. The very start and end get a tiny fade-in/out. Pure.
+ */
+export function audioJoinChain(
+  keep: { start: number; end: number }[],
+  sourceDuration: number,
+  o: { crossfade?: number; edgeFade?: number },
+  outLabel: string,
+): string[] {
+  const n = keep.length;
+  const xf = joinCrossfades(keep, sourceDuration, o.crossfade ?? 0.04);
+  const edge = o.edgeFade ?? 0.01;
+  const lines: string[] = [];
+  keep.forEach((k, i) => {
+    const s = k.start - (i > 0 ? xf[i - 1] / 2 : 0);
+    const e = k.end + (i < n - 1 ? xf[i] / 2 : 0);
+    const len = e - s;
+    const fades: string[] = [];
+    const f = Math.min(edge, (k.end - k.start) / 4);
+    if (i === 0 && f > 0) fades.push(`afade=t=in:st=0:d=${n3(f)}`);
+    if (i === n - 1 && f > 0) fades.push(`afade=t=out:st=${n3(len - f)}:d=${n3(f)}`);
+    const label = n === 1 ? outLabel : `a${i}`;
+    lines.push(`[0:a:0]atrim=start=${n3(s)}:end=${n3(e)},asetpts=PTS-STARTPTS${fades.map((x) => `,${x}`).join("")}[${label}]`);
+  });
+  let acc = "a0";
+  for (let j = 0; j < n - 1; j++) {
+    const out = j === n - 2 ? outLabel : `ax${j + 1}`;
+    lines.push(
+      xf[j] > 0
+        ? `[${acc}][a${j + 1}]acrossfade=d=${n3(xf[j])}:c1=qsin:c2=qsin[${out}]`
+        : `[${acc}][a${j + 1}]concat=n=2:v=0:a=1[${out}]`,
+    );
+    acc = out;
+  }
+  return lines;
+}
+
 /** Assemble the full ffmpeg invocation for a cut plan plus layers. Exported for tests. */
 export function buildRenderGraph(
   plan: CutPlan,
@@ -173,6 +243,10 @@ export function buildRenderGraph(
   opts: RenderOptions,
 ): { inputs: GraphInput[]; graph: string; maps: string[]; outSize?: { width: number; height: number }; duration: number } {
   if (!plan.keep.length) throw new Error("Cut plan keeps nothing");
+  const minLen = info.hasVideo ? 1 / (info.fps && info.fps > 0 ? info.fps : 30) : 0.01;
+  if (editDuration(plan) < minLen) {
+    throw new Error(`The edit is ${editDuration(plan).toFixed(3)}s long, shorter than one frame: nothing to render. Keep more of the source.`);
+  }
   const inputs: GraphInput[] = [{ args: ["-i", info.path] }];
   const lines: string[] = [];
   const hasV = info.hasVideo;
@@ -180,23 +254,14 @@ export function buildRenderGraph(
   const total = editDuration(plan);
   const fade = opts.edgeFade ?? 0.01;
 
-  // 1. Trim every kept range and concatenate.
-  const concatIn: string[] = [];
-  plan.keep.forEach((k, i) => {
-    const len = k.end - k.start;
-    if (hasV) {
-      lines.push(`[0:v:0]trim=start=${n3(k.start)}:end=${n3(k.end)},setpts=PTS-STARTPTS[v${i}]`);
-      concatIn.push(`[v${i}]`);
-    }
-    if (hasA) {
-      const f = Math.min(fade, len / 4);
-      const fades = f > 0 ? `,afade=t=in:st=0:d=${n3(f)},afade=t=out:st=${n3(len - f)}:d=${n3(f)}` : "";
-      lines.push(`[0:a:0]atrim=start=${n3(k.start)}:end=${n3(k.end)},asetpts=PTS-STARTPTS${fades}[a${i}]`);
-      concatIn.push(`[a${i}]`);
-    }
-  });
-  const catOut = `${hasV ? "[vcat]" : ""}${hasA ? "[acat]" : ""}`;
-  lines.push(`${concatIn.join("")}concat=n=${plan.keep.length}:v=${hasV ? 1 : 0}:a=${hasA ? 1 : 0}${catOut}`);
+  // 1. Trim every kept range. Video: hard cuts, concatenated. Audio: a short
+  //    equal-power crossfade at each join (no level dip, no discontinuity in a music bed).
+  const n = plan.keep.length;
+  if (hasV) {
+    plan.keep.forEach((k, i) => lines.push(`[0:v:0]trim=start=${n3(k.start)}:end=${n3(k.end)},setpts=PTS-STARTPTS[v${i}]`));
+    lines.push(`${plan.keep.map((_, i) => `[v${i}]`).join("")}concat=n=${n}:v=1:a=0[vcat]`);
+  }
+  if (hasA) lines.push(...audioJoinChain(plan.keep, info.duration, { crossfade: opts.crossfade, edgeFade: fade }, "acat"));
 
   let vLabel = hasV ? "vcat" : "";
   let aLabel = hasA ? "acat" : "";
@@ -489,6 +554,14 @@ export async function measureLoudness(plan: CutPlan, info: MediaInfo, opts: Rend
 export async function renderCutPlan(plan: CutPlan, output: string, opts: RenderOptions = {}): Promise<RenderResult> {
   const t0 = Date.now();
   const info = await probe(plan.source);
+  // Keep ranges past the real end of the source would make the reported duration a lie.
+  if (info.duration > 0) {
+    const keep = plan.keep
+      .map((k) => ({ start: Math.max(0, k.start), end: Math.min(k.end, info.duration) }))
+      .filter((k) => k.end - k.start > 1e-3);
+    if (!keep.length) throw new Error(`The cut plan keeps nothing inside ${plan.source} (source is ${info.duration.toFixed(2)}s long).`);
+    plan = { ...plan, keep };
+  }
   const out = resolve(output);
   let assCopy: string | undefined;
   const o = { ...opts };
@@ -546,7 +619,7 @@ export async function renderCutPlan(plan: CutPlan, output: string, opts: RenderO
       if (!encode.includes("h264_videotoolbox")) throw e;
       await runGraph(inputs, graph, maps, out, encodeArgs(info.hasVideo, info.hasAudio || Boolean(o.audio?.length), o, {}), timeout);
     }
-    const encoder = encode[encode.indexOf("-c:v") + 1];
+    const encoder = encode.includes("-c:v") ? encode[encode.indexOf("-c:v") + 1] : undefined;
     return { output: out, duration, ...(outSize ?? {}), reframe: reframeInfo, loudness, encoder, seconds: (Date.now() - t0) / 1000 };
   } finally {
     if (assCopy) rmSync(assCopy, { force: true });

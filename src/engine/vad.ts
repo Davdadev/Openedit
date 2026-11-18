@@ -171,10 +171,47 @@ export function unionRanges(ranges: TimeRange[]): TimeRange[] {
 
 const envCache = new Map<string, EnergyEnvelope>();
 
-/** Decode the voice band of a file's audio and compute its energy envelope (cached per file). */
-export async function analyzeEnergy(path: string): Promise<EnergyEnvelope> {
+/**
+ * Time of the quietest frame of `env` within [lo, hi] (seconds). Ties go to
+ * the frame closest to `prefer`. Used to land cut edges in the trough between
+ * syllables / breaths instead of on a word onset or decaying tail.
+ */
+export function quietestNear(env: EnergyEnvelope, prefer: number, lo: number, hi: number): number {
+  if (!env.db.length || hi <= lo) return prefer;
+  const a = Math.max(0, Math.ceil(lo / env.hop - 1e-9));
+  const b = Math.min(env.db.length - 1, Math.floor(hi / env.hop + 1e-9));
+  if (b < a) return prefer;
+  let best = -1;
+  let bestDb = Infinity;
+  for (let i = a; i <= b; i++) {
+    const d = env.db[i];
+    // 0.5 dB hysteresis so noise does not drag the edge away from the preferred point.
+    if (d < bestDb - 0.5 || (Math.abs(d - bestDb) <= 0.5 && Math.abs(i * env.hop - prefer) < Math.abs(best * env.hop - prefer))) {
+      if (d < bestDb) bestDb = d;
+      best = i;
+    }
+  }
+  // Frame i covers [i*hop, (i+1)*hop): cut in its middle.
+  return best < 0 ? prefer : Math.min(hi, Math.max(lo, r3(best * env.hop + env.hop / 2)));
+}
+
+/** Mean level (dBFS, energy average) of `env` over [a, b] seconds; -120 when empty. */
+export function meanDb(env: EnergyEnvelope, a: number, b: number): number {
+  const i0 = Math.max(0, Math.floor(a / env.hop));
+  const i1 = Math.min(env.db.length, Math.ceil(b / env.hop));
+  if (i1 <= i0) return -120;
+  let s = 0;
+  for (let i = i0; i < i1; i++) s += 10 ** (env.db[i] / 10);
+  return r1(10 * Math.log10(s / (i1 - i0) + 1e-12));
+}
+
+/**
+ * Decode the voice band of a file's audio and compute its energy envelope
+ * (cached per file and hop). `hop` 0.01 gives the 10 ms resolution used to snap cut edges.
+ */
+export async function analyzeEnergy(path: string, hop = ENERGY_HOP): Promise<EnergyEnvelope> {
   const abs = resolveMediaPath(path);
-  const key = await fileKey(abs);
+  const key = `${await fileKey(abs)}-${hop}`;
   const hit = envCache.get(key);
   if (hit) return hit;
   const raw = join(paths.tmp(), `energy-${key}-${process.pid}-${Date.now()}.f32`);
@@ -188,7 +225,7 @@ export async function analyzeEnergy(path: string): Promise<EnergyEnvelope> {
     ]);
     const buf = readFileSync(raw);
     const samples = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4));
-    const env = { hop: ENERGY_HOP, db: frameDb(samples, 16000, ENERGY_HOP).map(r1) };
+    const env = { hop, db: frameDb(samples, 16000, hop).map(r1) };
     envCache.set(key, env);
     return env;
   } finally {

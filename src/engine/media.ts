@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { existsSync, renameSync, statSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import type { MediaInfo } from "../hosts/types.js";
 import { run } from "./exec.js";
@@ -14,6 +14,8 @@ interface FfprobeStream {
   avg_frame_rate?: string;
   duration?: string;
   disposition?: { attached_pic?: number };
+  tags?: { rotate?: string };
+  side_data_list?: { side_data_type?: string; rotation?: number }[];
 }
 
 interface FfprobeOutput {
@@ -26,6 +28,15 @@ function parseRate(rate?: string): number | undefined {
   const [n, d] = rate.split("/").map(Number);
   if (!n || !d) return undefined;
   return Math.round((n / d) * 1000) / 1000;
+}
+
+/** Display rotation (0, 90, 180, 270) from the display matrix side data or the legacy rotate tag. */
+function streamRotation(s: FfprobeStream): number {
+  const fromMatrix = s.side_data_list?.find((d) => typeof d.rotation === "number")?.rotation;
+  const raw = fromMatrix ?? (s.tags?.rotate !== undefined ? Number(s.tags.rotate) : 0);
+  if (!Number.isFinite(raw)) return 0;
+  const r = ((Math.round(raw / 90) * 90) % 360 + 360) % 360;
+  return r;
 }
 
 /** Resolve "~" and relative paths; throw a clear error when the file is missing. */
@@ -61,6 +72,12 @@ export async function probe(path: string): Promise<MediaInfo> {
   if (video) {
     info.width = video.width;
     info.height = video.height;
+    const rotation = streamRotation(video);
+    if (rotation) {
+      info.rotation = rotation;
+      // ffmpeg autorotates on decode: report the size of the frames filters will actually see.
+      if (rotation % 180 !== 0) [info.width, info.height] = [video.height, video.width];
+    }
     info.fps = parseRate(video.avg_frame_rate) ?? parseRate(video.r_frame_rate);
     if (video.codec_name) info.videoCodec = video.codec_name;
   }
@@ -98,13 +115,17 @@ export async function extractAudio(path: string): Promise<string> {
   const abs = resolveMediaPath(path);
   const out = join(paths.audioCache(), `${await fileKey(abs)}.wav`);
   if (existsSync(out)) return out;
-  const tmp = `${out}.part.wav`;
+  // Unique temp name: concurrent calls for the same file must not write into one file.
+  const tmp = `${out}.${process.pid}-${randomBytes(4).toString("hex")}.part.wav`;
   await run("ffmpeg", [
     "-hide_banner", "-loglevel", "error", "-y",
     "-i", abs,
     "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
     tmp,
-  ]);
+  ]).catch((e: unknown) => {
+    rmSync(tmp, { force: true });
+    throw e;
+  });
   renameSync(tmp, out);
   return out;
 }

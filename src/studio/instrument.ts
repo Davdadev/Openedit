@@ -3,6 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { runWithSignal } from "../engine/exec.js";
 import { loadPlan } from "../mcp/plans.js";
 import { emitStudio, newCallId, runInToolContext, type StudioMediaItem, type StudioTarget } from "./events.js";
 
@@ -258,7 +259,10 @@ export function instrumentHandler(tool: string, hasInput: boolean, cb: Handler):
     const t0 = Date.now();
     emitStudio({ type: "tool_start", id, tool, title: toolTitle(tool), args: summarizeArgs(args), target: safeTarget(tool, args) });
     try {
-      const res = await runInToolContext({ id, tool }, () => cb(...a));
+      // The SDK passes `extra` (with the request's AbortSignal) after the args: cancelling the
+      // MCP request then kills the ffmpeg/whisper processes the call started.
+      const extra = (hasInput ? a[1] : a[0]) as { signal?: AbortSignal } | undefined;
+      const res = await runWithSignal(extra?.signal, () => runInToolContext({ id, tool }, () => cb(...a)));
       const text = resultText(res);
       const isError = !!(res as { isError?: boolean } | undefined)?.isError;
       const outputs = isError ? [] : extractPaths(text);

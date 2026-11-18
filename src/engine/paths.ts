@@ -27,3 +27,11 @@ export const paths = {
   tmp: () => dir(openeditHome(), "tmp"),
   token: () => join(dir(openeditHome()), "token"),
 };
+
+/**
+ * `output` with its extension replaced by `ext` (".srt"). Only the last path component's
+ * extension counts: "/Users/a.b/final" -> "/Users/a.b/final.srt", not "/Users/a.srt".
+ */
+export function sidecarPath(output: string, ext: string): string {
+  return output.replace(/\.[^./\\]*$/, "") + ext;
+}

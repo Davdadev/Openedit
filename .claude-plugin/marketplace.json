@@ -1,0 +1,17 @@
+{
+  "name": "openedit",
+  "owner": {
+    "name": "Davdadev",
+    "url": "https://github.com/Davdadev"
+  },
+  "description": "OpenEdit: local AI video editing for Claude (MCP server + editing skills).",
+  "plugins": [
+    {
+      "name": "openedit",
+      "source": "./",
+      "description": "OpenEdit MCP server plus skills that make Claude edit like a skilled human editor: cutting craft and pacing, shorts, stock media, review/QA, and computer-use playbooks for DaVinci Resolve and Premiere Pro.",
+      "category": "media",
+      "tags": ["video", "editing", "premiere-pro", "davinci-resolve", "ffmpeg", "captions"]
+    }
+  ]
+}

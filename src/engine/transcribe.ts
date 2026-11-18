@@ -1,11 +1,11 @@
-import { createHash } from "node:crypto";
-import { createWriteStream, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { createWriteStream, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { Segment, TimeRange, Transcript, Word } from "../hosts/types.js";
-import { run } from "./exec.js";
+import { run, runWithSignal } from "./exec.js";
 import { extractAudio, fileKey, probe, resolveMediaPath } from "./media.js";
 import { paths } from "./paths.js";
 import { detectSilences } from "./silence.js";
@@ -58,9 +58,14 @@ export async function ensureModel(model: WhisperModel, onProgress?: (msg: string
   onProgress?.(`Downloading whisper model ${model} from ${url}`);
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`Model download failed (${res.status}) for ${url}`);
-  const part = `${dest}.part`;
+  // Unique partial name: two first-run transcriptions must not write into the same file.
+  const part = `${dest}.${process.pid}-${randomBytes(4).toString("hex")}.part`;
   try {
     await pipeline(Readable.fromWeb(res.body as import("node:stream/web").ReadableStream), createWriteStream(part));
+    const expected = Number(res.headers.get("content-length"));
+    const got = statSync(part).size;
+    if (expected > 0 && got !== expected) throw new Error(`Model download incomplete for ${url}: got ${got} of ${expected} bytes`);
+    if (!got) throw new Error(`Model download incomplete for ${url}: empty file`);
     renameSync(part, dest);
   } catch (e) {
     rmSync(part, { force: true });
@@ -300,7 +305,10 @@ export async function transcribe(path: string, opts: TranscribeOptions = {}): Pr
     const silences = await detectSilences(abs, { thresholdDb: -40, minDuration: 0.25 });
     transcript = refineWords(transcript, silences);
   }
-  writeFileSync(jsonPath, JSON.stringify(transcript, null, 1));
+  // Atomic: a concurrent reader (another tool call) must never see a half-written cache file.
+  const tmpJson = `${jsonPath}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`;
+  writeFileSync(tmpJson, JSON.stringify(transcript, null, 1));
+  renameSync(tmpJson, jsonPath);
   return { transcript, jsonPath, cached: false };
 }
 
@@ -313,7 +321,8 @@ let whisperHelp: Promise<string> | null = null;
  */
 async function dtwArgs(model: WhisperModel): Promise<string[]> {
   if (process.env.OPENEDIT_WHISPER_DTW === "0") return [];
-  whisperHelp ??= run("whisper-cli", ["-h"], { allowFailure: true, timeoutMs: 20_000 })
+  // Shared across calls: never tie it to (and cancel it with) the first caller's request.
+  whisperHelp ??= runWithSignal(undefined, () => run("whisper-cli", ["-h"], { allowFailure: true, timeoutMs: 20_000 }))
     .then((r) => `${r.stdout}\n${r.stderr}`)
     .catch(() => "");
   const help = await whisperHelp;
@@ -330,8 +339,10 @@ function threads(): number {
 
 /** "[mm:ss.s]" timestamp. */
 export function stamp(t: number): string {
-  const m = Math.floor(t / 60);
-  const s = t - m * 60;
+  // Round to tenths first so 59.97 prints as 01:00.0, never 00:60.0.
+  const tenths = Math.round(Math.max(0, t) * 10);
+  const m = Math.floor(tenths / 600);
+  const s = (tenths - m * 600) / 10;
   return `[${String(m).padStart(2, "0")}:${s.toFixed(1).padStart(4, "0")}]`;
 }
 

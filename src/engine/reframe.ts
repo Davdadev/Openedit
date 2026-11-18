@@ -18,7 +18,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CutPlan, MediaInfo } from "../hosts/types.js";
-import { run } from "./exec.js";
+import { run, runWithSignal } from "./exec.js";
 import { fileKey } from "./media.js";
 import { paths } from "./paths.js";
 import { mapTime } from "./remap.js";
@@ -354,7 +354,8 @@ let helperPromise: Promise<{ cmd: string; args: string[] } | null> | null = null
 
 /** The face helper command, compiling it on first use. null when Vision/Swift is unavailable. */
 export function faceHelper(): Promise<{ cmd: string; args: string[] } | null> {
-  if (!helperPromise) helperPromise = buildHelper();
+  // Shared across calls: a cancelled first caller must not leave a half-built helper cached.
+  if (!helperPromise) helperPromise = runWithSignal(undefined, () => buildHelper());
   return helperPromise;
 }
 
