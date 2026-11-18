@@ -119,6 +119,9 @@ Tool-by-tool recipes and argument choices: [references/tool-recipes.md](referenc
 A clean cut is the floor, not the goal. When the piece calls for more, use the specialist skill
 first, and only where it serves the story:
 
+- **Creative pieces** (ads, promos, product films, trailers, anything with a vibe; footage
+  with no dialogue to trim): openedit-creative, and `build_sequence` to direct it shot by
+  shot. Never hand-assemble with ffmpeg scripts.
 - **Rhythm** (music, montage, pacing, J/L cuts, speed ramps, cutting to the beat):
   openedit-rhythm.
 - **Footage** (what is in the shots, b-roll that fits the line, match cuts, multicam):

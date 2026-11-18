@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { trailingSilence, type VisualStats, visualStats, visualWarnings } from "./review-visual.js";
 import { join } from "node:path";
 import type { CaptionCue, CutPlan, TimeRange, Transcript, Word } from "../hosts/types.js";
 import { FUNCTION_WORDS } from "./captions.js";
@@ -401,6 +402,8 @@ export interface ReviewResult {
   legend: string;
   /** Beat alignment, split edits, ramp sanity (review-rhythm.ts). */
   rhythm?: RhythmStats;
+  /** Picture checks over the render's own shots (review-visual.ts). */
+  visual?: VisualStats;
 }
 
 async function measure(path: string, hasVideo: boolean): Promise<{ loudness: LoudnessStats; peakDb?: number; black: TimeRange[]; frozen: TimeRange[] }> {
@@ -442,6 +445,25 @@ export async function reviewEdit(
   if (info.music || fullPlan?.splits?.length || fullPlan?.ramps?.length || fullPlan?.freezes?.length) {
     rhythm = rhythmStats(joins, { music: info.music, plan: fullPlan, fps: p.fps });
     warnings.push(...rhythmWarnings(rhythm, { plan: fullPlan, dialogue: Boolean(info.transcript), singleCamera: true }));
+  }
+
+  // Sound that stops before the picture (music fitted short, an end card in silence).
+  if (env && p.hasVideo) {
+    const tail = trailingSilence(env);
+    if (tail > 0.6) warnings.push(`the sound stops ${tail.toFixed(1)}s before the end: the last shot plays in silence. Extend the music (or its ring-out) under it, or end the picture sooner.`);
+  }
+  // Picture: analyse the render itself (unusable shots, metronome pacing, duplicates, weak opening).
+  let visual: VisualStats | undefined;
+  if (p.hasVideo) {
+    try {
+      const { analyzeFile } = await import("./analysis/analyze.js");
+      const an = await analyzeFile(abs, { force: true });
+      visual = visualStats(an.shots);
+      warnings.push(...visualWarnings(visual, { dialogue: Boolean(info.transcript) }));
+      if (!joins.length) joins.push(...an.shots.slice(1).map((x) => x.start));
+    } catch {
+      /* analysis unavailable: dialogue and media checks still apply */
+    }
   }
 
   const outBase = abs.replace(/\.[^.]+$/, "");
@@ -528,7 +550,7 @@ export async function reviewEdit(
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
-  return { stats, media, warnings, sheet, sheetPath, wave, wavePath, legend: legend.join("\n"), rhythm };
+  return { stats, media, warnings, sheet, sheetPath, wave, wavePath, legend: legend.join("\n"), rhythm, visual };
 }
 
 /** Text report for review_edit. Pure. */

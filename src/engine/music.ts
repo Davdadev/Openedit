@@ -518,9 +518,14 @@ export function planMontage(
   // longer (drop every other cut, keeping the downbeat grid) before falling back to reuse.
   const before = edges.length - 1;
   // Stop before shots get so long the montage loses its pulse (average over ~4 s).
+  // Never hold shots longer than most clips can fill, or the montage freezes frames instead.
+  const spans = clips.map((c) => (c.out ?? c.duration) - (c.in ?? 0)).sort((a, b) => a - b);
+  const typicalSpan = spans[Math.floor(spans.length / 2)];
   while (edges.length - 1 > clips.length && edges.length > 3) {
     const coarser = edges.filter((_, i) => i === 0 || i === edges.length - 1 || i % 2 === 0);
-    if (T / (coarser.length - 1) > 4) break;
+    // The last shot is allowed to ring out over the ending, so it is not counted.
+    const longest = Math.max(...coarser.slice(1, -1).map((t, i) => t - coarser[i]));
+    if (T / (coarser.length - 1) > 4 || longest > typicalSpan + 1e-6) break;
     edges = coarser;
   }
   if (edges.length - 1 < before) {
@@ -546,8 +551,15 @@ export function planMontage(
       }
     }
     if (!chosen) {
-      chosen = [...clips].sort((x, y) => (y.out ?? y.duration) - (y.in ?? 0) - ((x.out ?? x.duration) - (x.in ?? 0)))[0];
-      notes.push(`slot ${k} (${len.toFixed(2)}s) is longer than every clip; the last frame of ${chosen.path.split("/").pop()} is held`);
+      // No clip is long enough: keep rotating (never one clip in every slot), and pick the
+      // longest of the next few so as little as possible is held.
+      const span = (c: MontageClipInput) => (c.out ?? c.duration) - (c.in ?? 0);
+      const ring = clips.map((_, i) => clips[(cursor + i) % clips.length]);
+      const prev = shots.at(-1)?.path;
+      const pool = ring.filter((c) => c.path !== prev || clips.length === 1);
+      chosen = pool.slice(0, Math.max(1, Math.ceil(clips.length / 3))).sort((x, y) => span(y) - span(x))[0];
+      cursor = (clips.indexOf(chosen) + 1) % clips.length;
+      notes.push(`slot ${k} (${len.toFixed(2)}s) is longer than every clip window; the last ${(len - span(chosen)).toFixed(2)}s of ${chosen.path.split("/").pop()} is held — give longer in/out windows or use a faster style`);
     }
     const lo = chosen.in ?? 0;
     const hi = chosen.out ?? chosen.duration;
@@ -645,6 +657,9 @@ export async function shotInterest(files: string[]): Promise<{ fn?: InterestFn; 
     const sharp = x.sharpness !== undefined ? Math.min(1, x.sharpness / 150) : 0.5;
     const expo = !x.exposure || x.exposure === "ok" ? 1 : 0;
     const shake = Math.min(1, (x.shake ?? 0) * 2);
+    // Blank, blown-out, black or flash-frame shots are never montage material.
+    const bright = (x as { brightness?: number }).brightness ?? 0.5;
+    if (bright >= 0.93 || bright <= 0.06 || (x.sharpness !== undefined && x.sharpness < 4)) return -3;
     return 0.55 * motion + 0.25 * sharp + 0.2 * expo - 0.3 * shake;
   };
   return { fn, note: `windows chosen by motion / sharpness from the shot analysis (${shots.size} clips)` };

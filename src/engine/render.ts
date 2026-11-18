@@ -174,7 +174,7 @@ export function zoomExpression(zooms: ZoomSpec[]): string {
   return terms.length ? `1+${terms.join("+")}` : "1";
 }
 
-interface GraphInput {
+export interface GraphInput {
   args: string[];
 }
 
@@ -658,7 +658,7 @@ export function encodeArgs(
   return args;
 }
 
-async function runGraph(
+export async function runGraph(
   inputs: GraphInput[],
   graph: string,
   maps: string[],

@@ -59,6 +59,7 @@ describe("skills", () => {
   it("has the expected skill set", () => {
     expect(skills.sort()).toEqual(
       [
+        "openedit-creative",
         "openedit-editing",
         "openedit-motion-design",
         "openedit-premiere-computer-use",

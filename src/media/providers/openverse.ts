@@ -52,8 +52,31 @@ export const openverse: MediaProvider = {
       if (q.minWidth && q.minWidth >= 1600) params.size = "large";
     } else if (q.kind === "music") params.category = "music";
 
-    const data = await fetchJson<{ results: OVItem[] }>(`${API}/${audio ? "audio" : "images"}/`, { params, signal: ctx.signal });
-    return (data.results ?? [])
+    const want = Math.min(20, Math.max(1, q.limit));
+    const fetchOnce = async (p: Record<string, string | number | undefined>) =>
+      (await fetchJson<{ results: OVItem[] }>(`${API}/${audio ? "audio" : "images"}/`, { params: p, signal: ctx.signal })).results ?? [];
+    // Openverse matches EVERY word, so a descriptive "vibe" query ("playful upbeat funky groove")
+    // often finds nothing. Relax step by step until there is enough to choose from: drop the
+    // music category (many tracks are untagged), then one word at a time, then single words.
+    const words = q.query.split(/\s+/).filter(Boolean);
+    const variants: Record<string, string | number | undefined>[] = [params];
+    if (params.category) variants.push({ ...params, category: undefined });
+    for (let n = words.length - 1; n >= 1 && variants.length < 7; n--) {
+      for (let i = 0; i + n <= words.length && variants.length < 7; i++) variants.push({ ...params, category: undefined, q: words.slice(i, i + n).join(" ") });
+    }
+    const seen = new Set<string>();
+    const items: OVItem[] = [];
+    for (const v of variants) {
+      for (const it of await fetchOnce(v)) {
+        if (!seen.has(it.id)) {
+          seen.add(it.id);
+          items.push(it);
+        }
+      }
+      if (items.length >= Math.ceil(want / 2) || variants.length === 1) break;
+    }
+    return items
+      .slice(0, want)
       .filter((it) => it.url)
       .map((it): MediaResult => {
         const code = normalizeLicense(it.license);

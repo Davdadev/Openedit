@@ -27,6 +27,7 @@ import { registerStudioTools } from "../studio/tools.js";
 import { MEDIA_INSTRUCTIONS, registerMediaTools } from "../media/tools.js";
 import { registerRhythmTools, timelineMusic } from "./rhythm-tools.js";
 import { registerShotTools } from "../engine/analysis/tools.js";
+import { registerSequenceTools } from "./sequence-tools.js";
 import { GRAPHICS_INSTRUCTIONS, registerGraphicsTools } from "../graphics/tools.js";
 import { cutPlanView, registerUi, renderView, statusView, transcriptView, uiMeta } from "../ui/index.js";
 
@@ -108,7 +109,14 @@ Standard workflow:
 8. Optional: place_clips (b-roll, music with duckDb, SFX), render_motion (titles / lower thirds), add_markers.
 9. render {output, reframe?: "9:16" for shorts, loudnorm: true} — in standalone mode this produces the final mp4.
 10. review_edit {path, planId} after EVERY render: look at the contact sheet and waveform, fix every WARNING (re-plan, re-caption, fewer zooms) and re-render before reporting to the user.
-All times are seconds. Times for markers, zooms, captions and placements are on the EDITED timeline (after cuts).`;
+All times are seconds. Times for markers, zooms, captions and placements are on the EDITED timeline (after cuts).
+
+Creative pieces (ads, promos, product films, trailers, travel/event films, anything made from footage WITHOUT dialogue to trim) use a different workflow — never hand-assemble with ffmpeg:
+1. analyze_footage {folder} — LOOK at the contact sheets; list hero shots and reject unusable ones (✗ REJECT tags, and anything showing rig, gear, ground or hands).
+2. Find the one-line idea and the payoff moment; pick a structure (hook / build / payoff / end card). See the openedit-creative skill.
+3. Choose music that matches the vibe (get_media kind:"music"), sound effects for the key moments, a look preset.
+4. build_sequence {output, footage, shots:[{shot, duration, transition?, ramp?, move?}], look, music, sfx, graphics} — vary shot lengths; give the hero and payoff room.
+5. review_edit {path} — it checks the render's own shots (unusable frames, metronome pacing, duplicates, a dark opening, loudness). Fix every warning and re-render.`;
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: "openedit", version: VERSION }, { instructions: `${WORKFLOW}\n\n${MEDIA_INSTRUCTIONS}\n\n${GRAPHICS_INSTRUCTIONS}` });
@@ -979,6 +987,7 @@ export function createServer(): McpServer {
   registerGraphicsTools(server);
   // Shots & scenes: analyze_footage, suggest_broll, find_match_cuts, multicam_sync, multicam_edit.
   registerShotTools(server);
+  registerSequenceTools(server);
   // MCP Apps: inline views for hosts that render them (text content is unchanged for others).
   registerUi(server);
 

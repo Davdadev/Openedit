@@ -6,6 +6,7 @@
  * Pipeline per file: one streaming decode -> FrameStats -> boundaries -> shots;
  * one select pass for 1-3 representative 320px JPEGs per shot; one Vision helper run.
  */
+import { usabilityTag } from "./usable.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { fileKey, mediaKind, probe, resolveMediaPath } from "../media.js";
@@ -350,7 +351,7 @@ export function shotLine(s: Shot): string {
   return `${s.id} ${mmss(s.start)}–${mmss(s.end)} ${s.duration.toFixed(1)}s ${s.transition === "start" ? "" : `[${s.transition}] `}${s.camera}, motion ${s.motion.toFixed(3)}, ${s.exposure}${sharp}, ${faces}, ${s.palette
     .slice(0, 3)
     .map((p) => p.hex)
-    .join(" ")}${labels ? ` | ${labels}` : ""}`;
+    .join(" ")}${labels ? ` | ${labels}` : ""}${usabilityTag(s)}`;
 }
 
 const SIZE_COLOR: Record<ShotSize, string> = {
