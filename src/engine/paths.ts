@@ -1,10 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-/** Root of all OpenEdit state. Override with OPENEDIT_HOME (used by tests). */
+/**
+ * Root of all OpenEdit state. Override with OPENEDIT_HOME (used by tests). Always absolute:
+ * ffmpeg resolves relative paths inside concat lists against the list's own folder.
+ */
 export function openeditHome(): string {
-  return process.env.OPENEDIT_HOME || join(homedir(), ".openedit");
+  return resolve(process.env.OPENEDIT_HOME || join(homedir(), ".openedit"));
 }
 
 function dir(...parts: string[]): string {
@@ -19,7 +22,7 @@ export const paths = {
   audioCache: () => dir(openeditHome(), "cache", "audio"),
   transcripts: () => dir(openeditHome(), "cache", "transcripts"),
   /** Whisper models are large; OPENEDIT_MODELS lets tests share the user's model dir. */
-  models: () => dir(process.env.OPENEDIT_MODELS || join(openeditHome(), "models")),
+  models: () => dir(resolve(process.env.OPENEDIT_MODELS || join(openeditHome(), "models"))),
   plans: () => dir(openeditHome(), "plans"),
   captions: () => dir(openeditHome(), "captions"),
   renders: () => dir(openeditHome(), "renders"),

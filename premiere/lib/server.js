@@ -33,6 +33,7 @@ const COMMANDS = [
   "addCaptions",
   "addZooms",
   "render",
+  "applyMogrt",
 ];
 
 // How long the HTTP caller waits for one command. ExtendScript cannot be

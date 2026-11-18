@@ -276,4 +276,8 @@ export class ResolveHost implements EditorHost {
   render(opts: { output: string; preset?: string }): Promise<{ output: string }> {
     return this.rpc("render", opts);
   }
+  /** Build a NEW timeline from an interchange file (multicam switch, assembled shots) via ImportTimelineFromFile. */
+  importTimeline(xmlPath: string, name?: string): Promise<{ sequence: string; file: string }> {
+    return this.rpc("importTimeline", { xmlPath, name }, 10 * 60_000);
+  }
 }

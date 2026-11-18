@@ -30,6 +30,7 @@ claude:  transcribe -> plan_cuts -> (shows you the plan) -> apply_cuts -> make_c
 | Loudness | two-pass EBU R128: -14 LUFS, true peak under -1.5 dBTP |
 | Any editor | `export_timeline`: FCP7 XML (Premiere, Resolve), FCPXML 1.10 (Final Cut Pro, Resolve), CMX 3600 EDL, SRT |
 | Markers | coloured sequence markers for review |
+| Rhythm | `detect_beats` (tempo, beats, downbeats, sections, drops; pure TS), `fit_music` (bar-line edits, natural ending), `snap_to_beats`, `build_montage`, J/L split edits, eased speed ramps / freeze / reverse |
 
 Edits are **non-destructive**: cut plans always build a *new* sequence/timeline next to your original.
 
@@ -138,7 +139,15 @@ The `auto_edit` MCP prompt walks Claude through the standard workflow.
 `find_silences` · `plan_cuts` · `show_plan` · `apply_cuts` · `make_captions` ·
 `revise_plan` · `add_markers` · `add_zooms` · `auto_zooms` · `import_media` · `place_clips` · `render` ·
 `export_timeline` · `motion_templates` · `render_motion` · `render_caption_overlay` · `get_media` ·
-`find_media` · `download_media` · `media_credits` · `media_sources` · `open_studio` · `studio_overlay_snippet`
+`find_media` · `download_media` · `media_credits` · `media_sources` · `open_studio` · `studio_overlay_snippet` ·
+`detect_beats` · `fit_music` · `snap_to_beats` · `build_montage` · `add_jl_cuts` · `speed_ramp` ·
+`import_template_pack` · `graphics_catalog` · `preview_template` · `create_motion_template` · `place_graphic`
+
+**Motion graphics.** `import_template_pack` indexes packs you own (Motion Bro `.mbr`, `.zip`, folders, `.mogrt`, `.aep`) in place;
+`graphics_catalog` shows them with OpenEdit's and your own templates as a contact sheet. `.mogrt` files are placed natively in Premiere
+(fields set through Essential Graphics); OpenEdit and Figma-made templates (`create_motion_template` with Figma's `get_design_context` code)
+render to alpha ProRes and go on an upper track in any host, or become an editable Fusion Text+ title in Resolve. `.aep` projects need
+After Effects and serve as style references only.
 
 ## Skills
 
@@ -150,6 +159,8 @@ skilled human editor. They load automatically when a request needs them:
 | `openedit-editing` | Read first, decide the story, cut on meaning (keep breaths and beats), pacing by platform, sparing zooms, readable captions, ducked music, loudness targets, and an anti-"AI slop" checklist |
 | `openedit-shorts` | 9:16 shorts from long-form: a self-contained 20-60 s moment, a 1-2 s hook, face-tracked reframe, captions inside platform safe zones |
 | `openedit-stock-media` | B-roll, music and SFX that fit the sentence and the footage, and their licence and credit obligations |
+| `openedit-motion-design` | Lower thirds, titles and callouts from your template packs or your Figma designs, placed natively in Premiere (MOGRT) or Resolve (alpha overlay / Fusion title) |
+| `openedit-rhythm` | Cutting to music: beat vs downbeat vs phrase by genre, songs edited on bar lines that end on their own ending, J/L cut grammar, speed ramps that sell an action, rhythm anti-slop |
 | `openedit-review` | QA every render (frames, duration, LUFS/true peak, captions, framing) and fix before reporting |
 | `openedit-resolve-computer-use` | When and how to drive DaVinci Resolve's UI with computer use for what its scripting API can't do (free Resolve, keyframes, transitions, Fairlight, Deliver) |
 | `openedit-premiere-computer-use` | The same for Premiere Pro (panel setup, caption styles, keyframes, ducking, Export mode) |

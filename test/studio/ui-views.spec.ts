@@ -314,3 +314,43 @@ test("live theme switch and no-serverTools fallback", async ({ page }) => {
     .poll(() => page.evaluate(() => (window as unknown as { __host: { messages: { method?: string; params?: { content?: { text: string }[] } }[] } }).__host.messages.find((m) => m.method === "ui/message")?.params?.content?.[0].text))
     .toContain(`Apply cut plan ${plan.planId}`);
 });
+
+for (const theme of THEMES) {
+  test(`graphics view: catalog, fields and place (${theme})`, async ({ page }) => {
+    const uri = (b: Buffer) => `data:image/jpeg;base64,${b.toString("base64")}`;
+    const item = (o: Record<string, unknown>) => ({ apps: ["premiere"], usable: true, locked: false, missingFonts: [], params: [], pack: "OpenEdit", ...o });
+    const items = [
+      item({ id: "speaker-lower-third", name: "Speaker lower third", kind: "user", category: "Lower thirds", pack: "My templates", duration: 5, thumb: uri(thumbJpeg), apps: ["premiere", "resolve", "standalone"],
+        note: "Your template (figma): rendered to alpha video and placed on an upper track in any host.",
+        params: [
+          { id: "name", name: "name", type: "text", default: "Maya Okafor" },
+          { id: "role", name: "role", type: "text", default: "Head of Product" },
+          { id: "brand_accent", name: "brand_accent", type: "color", default: "#ff6a3d" },
+        ] }),
+      item({ id: "lower-third", name: "lower-third", kind: "hyperframes", category: "Lower thirds", duration: 5, thumb: uri(thumbJpeg2), params: [{ id: "position", name: "position", type: "dropdown", options: ["left", "right", "center"], default: "left" }] }),
+      item({ id: "my-titles/clean-title-01", name: "Clean Title 01", kind: "mogrt", category: "Clean", pack: "My Titles", duration: 3.9, thumb: uri(thumbJpeg2), missingFonts: ["Archivo-Black"],
+        params: [{ id: "scale", name: "Main Scale", type: "slider", default: 90, min: 0, max: 250, group: "Main Settings" }] }),
+      item({ id: "my-titles/clean-title-02", name: "Clean Title 02", kind: "demo", category: "Clean", pack: "My Titles", usable: false, locked: true, apps: [], note: "Locked demo placeholder (full version only): preview only, not usable." }),
+      item({ id: "moji/title-01", name: "Title 01", kind: "aep", category: "Titles", pack: "Moji", usable: false, apps: ["aftereffects"] }),
+    ];
+    const sc = { view: "graphics", mode: "catalog", host: "premiere", items, total: 5, offset: 0, query: "" };
+    const placed = { view: "graphics", mode: "placed", host: "premiere", items: [items[0]], placed: { method: "rendered-overlay", text: "Rendered Speaker lower third and placed it on V3 at 4.00s in premiere." } };
+    await mount(page, { view: "graphics", theme, tool: "graphics_catalog", input: {}, result: textResult("5 templates", sc), responses: { place_graphic: textResult("Placed", placed) } });
+    const f = frame(page);
+    await expect(f.locator(".tile")).toHaveCount(5);
+    await expect(f.locator(".tile.off")).toHaveCount(2);
+    await expect(f.locator(".tile .k-mogrt")).toHaveText("MOGRT");
+    await expect(f.locator(".tile .fb")).toHaveCount(1);
+    await shot(page, `graphics-catalog-${theme}`);
+    await f.locator(".tile").first().click();
+    await expect(f.locator("#detail")).toBeVisible();
+    await expect(f.locator(".f")).toHaveCount(3);
+    await f.locator("#f-name").fill("Ada Lovelace");
+    await f.locator("#at").fill("4");
+    await shot(page, `graphics-detail-${theme}`);
+    await f.locator("#use").click();
+    await expect(f.locator(".placed")).toContainText("placed it on V3");
+    const calls = await page.evaluate(() => (window as unknown as { __host: { calls: { name: string; arguments: unknown }[] } }).__host.calls);
+    expect(calls).toEqual([{ name: "place_graphic", arguments: { id: "speaker-lower-third", at: 4, params: { name: "Ada Lovelace" } } }]);
+  });
+}

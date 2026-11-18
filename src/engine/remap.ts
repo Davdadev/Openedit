@@ -1,14 +1,20 @@
 import type { CutPlan, TimeRange } from "../hosts/types.js";
+import { hasRetiming, retimedDuration, retimedMap, retimedRange, retimedSegments, retimedUnmap } from "./speed.js";
 
 const EPS = 1e-6;
 
+/** Plans that may carry speed ramps / freeze frames (then every mapping goes through the time map). */
+type Plan = Pick<CutPlan, "keep"> & Partial<Pick<CutPlan, "ramps" | "freezes">>;
+
 /** Total length of the edited result. */
-export function editDuration(plan: Pick<CutPlan, "keep">): number {
+export function editDuration(plan: Plan): number {
+  if (hasRetiming(plan)) return retimedDuration(plan);
   return plan.keep.reduce((acc, k) => acc + (k.end - k.start), 0);
 }
 
 /** Map a time on the source media to the edited timeline, or null if it was cut. */
-export function mapTime(plan: Pick<CutPlan, "keep">, sourceTime: number): number | null {
+export function mapTime(plan: Plan, sourceTime: number): number | null {
+  if (hasRetiming(plan)) return retimedMap(plan, sourceTime);
   let acc = 0;
   for (const k of plan.keep) {
     if (sourceTime < k.start - EPS) return null;
@@ -19,7 +25,8 @@ export function mapTime(plan: Pick<CutPlan, "keep">, sourceTime: number): number
 }
 
 /** Map a time on the edited timeline back to the source media, or null if out of range. */
-export function unmapTime(plan: Pick<CutPlan, "keep">, editTime: number): number | null {
+export function unmapTime(plan: Plan, editTime: number): number | null {
+  if (hasRetiming(plan)) return retimedUnmap(plan, editTime);
   if (editTime < -EPS) return null;
   let acc = 0;
   for (const k of plan.keep) {
@@ -34,7 +41,8 @@ export function unmapTime(plan: Pick<CutPlan, "keep">, editTime: number): number
  * Map a source range into the edit. A range that straddles cuts becomes
  * several edit-time pieces (one per kept segment it touches).
  */
-export function mapRange(plan: Pick<CutPlan, "keep">, range: TimeRange): TimeRange[] {
+export function mapRange(plan: Plan, range: TimeRange): TimeRange[] {
+  if (hasRetiming(plan)) return retimedRange(plan, range);
   const out: TimeRange[] = [];
   let acc = 0;
   for (const k of plan.keep) {
@@ -47,7 +55,8 @@ export function mapRange(plan: Pick<CutPlan, "keep">, range: TimeRange): TimeRan
 }
 
 /** Edit-time positions of every kept segment, in order. */
-export function editSegments(plan: Pick<CutPlan, "keep">): (TimeRange & { sourceStart: number; sourceEnd: number })[] {
+export function editSegments(plan: Plan): (TimeRange & { sourceStart: number; sourceEnd: number })[] {
+  if (hasRetiming(plan)) return retimedSegments(plan);
   let acc = 0;
   return plan.keep.map((k) => {
     const seg = { start: acc, end: acc + (k.end - k.start), sourceStart: k.start, sourceEnd: k.end };

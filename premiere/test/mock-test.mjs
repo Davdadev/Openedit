@@ -483,7 +483,7 @@ await test("applyCutPlan validates its input", () => {
 
 console.log("editing commands against a fake Premiere DOM (test/fake-premiere.mjs)");
 
-const { makePremiere, makeSequence, razorTrack, TPS: FTPS } = await import("./fake-premiere.mjs");
+const { makePremiere, makeSequence, razorTrack, TPS: FTPS, MOGRT_PARAMS } = await import("./fake-premiere.mjs");
 const mediaDir = path.join(tmp, "media");
 fs.mkdirSync(mediaDir, { recursive: true });
 const media = {};
@@ -745,6 +745,79 @@ const clipSummary = (tr) => tr._clips.map((c) => [secs(c.start), secs(c.end), se
     assert.deepEqual(clipSummary(seq._audio[0]), clipSummary(seq._video[0]));
     assert.equal(r.result.clips, 3);
   });
+}
+
+{
+  // Motion graphics: MOGRT placement on its own project.
+  const pp = makePremiere({ fps: 25, duration: 60 });
+  const run3 = hostContext(pp);
+  const seq = makeSequence(pp.project, "Graphics", { fps: 25 });
+  pp.project._sequences.push(seq);
+  pp.project.activeSequence = seq;
+
+  await test("applyMogrt: importMGT on V4, sets text/colour/point/slider/checkbox/dropdown, trims, reports missing", () => {
+    const mogrt = path.join(mediaDir, "Lower Third.mogrt");
+    fs.writeFileSync(mogrt, "x");
+    const aeText = JSON.stringify({ capPropFontEdit: true, fontEditValue: "Inter-Bold", textEditValue: "Your Name" });
+    MOGRT_PARAMS.set(mogrt, {
+      duration: 6,
+      params: [
+        { name: "Name", value: aeText },
+        { name: "Role", value: "plain text" },
+        { name: "Accent", value: [1, 0, 0, 1] },
+        { name: "Main Position", value: [0.5, 0.5] },
+        { name: "Main Scale", value: 100 },
+        { name: "Show Bar", value: true },
+        { name: "Style", value: 0 },
+      ],
+    });
+    const before = seq._video.length;
+    const r = run3("applyMogrt", {
+      path: mogrt,
+      at: 1.6,
+      duration: 3,
+      track: Math.max(4, before + 1),
+      params: [
+        { name: "Name", type: "text", value: "Maya Okafor \u00e9" },
+        { name: "Role", type: "text", value: "Head of Product" },
+        { name: "Accent", type: "color", value: [255, 106, 61, 255] },
+        { name: "Main Position", type: "point", value: [0.1, 0.8] },
+        { name: "Main Scale", type: "slider", value: 80 },
+        { name: "Show Bar", type: "checkbox", value: false },
+        { name: "Style", type: "dropdown", value: 2 },
+        { name: "Nope", type: "text", value: "x" },
+      ],
+    });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.result.placed, true);
+    assert.equal(r.result.set, 7);
+    assert.deepEqual(Array.from(r.result.missing), ["Nope"]);
+    assert.deepEqual(Array.from(r.result.errors), []);
+    assert.equal(r.result.duration, 3, "trimmed to the requested duration");
+    const track = seq._video[r.result.track - 1];
+    const clip = track._clips.find((c) => c._mgtParams);
+    assert.ok(clip, "graphic clip on the requested track");
+    assert.equal(secs(clip.start), 1.6);
+    const val = (n) => clip._mgtParams.find((p) => p.displayName === n);
+    assert.equal(JSON.parse(val("Name").getValue()).textEditValue, "Maya Okafor \u00e9", "AE text JSON keeps its font info and gets the new text");
+    assert.equal(JSON.parse(val("Name").getValue()).fontEditValue, "Inter-Bold");
+    assert.equal(val("Role").getValue(), "Head of Product");
+    assert.deepEqual(Array.from(val("Accent").colorValue), [255, 106, 61, 255]);
+    assert.deepEqual(Array.from(val("Main Position").getValue()), [0.1, 0.8]);
+    assert.equal(val("Main Scale").getValue(), 80);
+    assert.equal(val("Show Bar").getValue(), false);
+    assert.equal(val("Style").getValue(), 2);
+  });
+
+  await test("applyMogrt: clean errors for missing file and bad colour", () => {
+    assert.match(run3("applyMogrt", { path: path.join(mediaDir, "none.mogrt"), at: 0 }).error, /file not found/);
+    const mogrt = path.join(mediaDir, "Lower Third.mogrt");
+    const r = run3("applyMogrt", { path: mogrt, at: 9, params: [{ name: "Accent", type: "color", value: "#ff0000" }] });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.result.set, 0);
+    assert.match(r.result.errors[0], /Accent: color must be/);
+  });
+
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

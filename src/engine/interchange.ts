@@ -22,6 +22,7 @@ import { pathToFileURL } from "node:url";
 import type { CaptionCue, CutPlan, MediaInfo, Marker, Zoom } from "../hosts/types.js";
 import { toSRT } from "./captions.js";
 import { run } from "./exec.js";
+import { hasRetiming, timePieces } from "./speed.js";
 
 export type InterchangeFormat = "fcp7" | "fcpxml" | "edl" | "srt";
 export const INTERCHANGE_FORMATS: InterchangeFormat[] = ["fcp7", "fcpxml", "edl", "srt"];
@@ -130,8 +131,10 @@ export function snapPlan(plan: Pick<CutPlan, "keep">, rate: FrameRate, mediaFram
  * Map a time on the (unsnapped) edited timeline to a record frame on the
  * snapped timeline, so markers/captions/zooms stay on the same picture.
  */
-export function editTimeToFrame(plan: Pick<CutPlan, "keep">, edits: SnappedEdit[], t: number, rate: FrameRate): number {
+export function editTimeToFrame(plan: Pick<CutPlan, "keep"> & Partial<Pick<CutPlan, "ramps" | "freezes">>, edits: SnappedEdit[], t: number, rate: FrameRate): number {
   if (!edits.length) return 0;
+  // Retimed edits are laid out on the edit timeline directly (see recordClips).
+  if (hasRetiming(plan)) return Math.min(Math.max(Math.round(t * rate.fps), edits[0].recIn), edits[edits.length - 1].recOut);
   let acc = 0;
   let source: number | null = null;
   let segIndex = -1;
@@ -150,6 +153,110 @@ export function editTimeToFrame(plan: Pick<CutPlan, "keep">, edits: SnappedEdit[
   const f = e.recIn + (Math.round(source * rate.fps) - e.srcIn);
   return Math.min(Math.max(f, e.recIn), e.recOut);
 }
+
+/** A record clip: a snapped edit plus its retiming and the range of its (linked) sound. */
+export interface RecordClip extends SnappedEdit {
+  /** Playback speed in percent (100 = normal; source frames / record frames). */
+  speed?: number;
+  reverse?: boolean;
+  /** Variable speed: (record frame, source frame) points, clip-relative record frames (FCPXML timeMap). */
+  timeMap?: { rec: number; src: number }[];
+  /** Variable speed as constant-speed steps (FCP7 / Premiere: one clipitem each). */
+  substeps?: { srcIn: number; srcOut: number; recIn: number; recOut: number; speed: number }[];
+  /** The clip's sound: same frames as the picture ("same"), a different range (split edit), or none (muted ramp). */
+  audio: "same" | null | { srcIn: number; srcOut: number; recIn: number; recOut: number };
+}
+
+/**
+ * Record clips for interchange. Plain plans: the snapped edits, with split edits (J/L) moving the
+ * sound (or picture) edit point by whole frames. Retimed plans: one clip per time piece (plain,
+ * ramp, freeze, reverse) laid out on the edit timeline; variable-speed ramps become up to four
+ * constant-speed steps (FCP7 / Premiere "Time Remap" speed) and carry the exact curve as a
+ * timeMap (FCPXML). Pure.
+ */
+export function recordClips(plan: Pick<CutPlan, "keep"> & Partial<Pick<CutPlan, "splits" | "ramps" | "freezes">>, rate: FrameRate, mediaFrames?: number): RecordClip[] {
+  const fps = rate.fps;
+  if (!hasRetiming(plan)) {
+    const edits = snapPlan(plan, rate, mediaFrames);
+    const clips: RecordClip[] = edits.map((e) => ({ ...e, audio: "same" }));
+    const byIndex = new Map(clips.map((c, i) => [c.index, i]));
+    const own = (c: RecordClip) => (c.audio === "same" || c.audio === null ? { srcIn: c.srcIn, srcOut: c.srcOut, recIn: c.recIn, recOut: c.recOut } : c.audio);
+    for (const sp of plan.splits ?? []) {
+      const ia = byIndex.get(sp.index);
+      const ib = byIndex.get(sp.index + 1);
+      if (ia === undefined || ib === undefined) continue;
+      const A = clips[ia];
+      const B = clips[ib];
+      const d = Math.max(0, Math.round(sp.seconds * fps));
+      if (!d) continue;
+      const sh = sp.type === "J" ? -d : d;
+      if ((sp.roll ?? "audio") === "audio") {
+        const a = own(A);
+        const b = own(B);
+        A.audio = { ...a, srcOut: a.srcOut + sh, recOut: a.recOut + sh };
+        B.audio = { ...b, srcIn: Math.max(0, b.srcIn + sh), recIn: b.recIn + sh };
+      } else {
+        // The picture edit point moves; the sound keeps the original join.
+        const a = own(A);
+        const b = own(B);
+        A.audio = a;
+        B.audio = b;
+        A.srcOut -= sh;
+        A.recOut -= sh;
+        B.srcIn -= sh;
+        B.recIn -= sh;
+      }
+    }
+    return clips;
+  }
+  const clips: RecordClip[] = [];
+  for (const p of timePieces(plan, fps)) {
+    const recIn = Math.round(p.editStart * fps);
+    const recOut = Math.round(p.editEnd * fps);
+    if (recOut <= recIn) continue;
+    const srcIn = Math.round(p.srcStart * fps);
+    let srcOut = Math.round(p.srcEnd * fps);
+    if (mediaFrames) srcOut = Math.min(srcOut, mediaFrames);
+    const index = p.keep;
+    if (p.kind === "normal") {
+      clips.push({ index, srcIn, srcOut: srcIn + (recOut - recIn), recIn, recOut, audio: "same" });
+    } else if (p.kind === "freeze") {
+      clips.push({ index, srcIn, srcOut: srcIn + 1, recIn, recOut, speed: round2((1 / (recOut - recIn)) * 100), audio: null });
+    } else if (p.kind === "reverse") {
+      clips.push({ index, srcIn, srcOut, recIn, recOut, reverse: true, speed: round2(((srcOut - srcIn) / (recOut - recIn)) * 100), audio: null });
+    } else {
+      const steps = p.steps ?? [];
+      const audio: RecordClip["audio"] = p.audio === "pitch" ? "same" : null;
+      // Exact curve as a timeMap (FCPXML).
+      const pts: { rec: number; src: number }[] = [{ rec: 0, src: 0 }];
+      let t = 0;
+      for (const st of steps) {
+        t += (st.s1 - st.s0) / st.v;
+        pts.push({ rec: Math.round(t * fps * 100) / 100, src: Math.round((st.s1 - p.srcStart) * fps * 100) / 100 });
+      }
+      // Up to four constant-speed steps (FCP7 / Premiere expand the clip into these).
+      const groups = Math.min(4, steps.length);
+      const substeps: NonNullable<RecordClip["substeps"]> = [];
+      let r0 = recIn;
+      let s0 = srcIn;
+      for (let g = 0; g < groups; g++) {
+        const last = steps[Math.round(((g + 1) * steps.length) / groups) - 1];
+        const outT = p.editStart + steps.filter((st) => st.s1 <= last.s1 + 1e-9).reduce((acc, st) => acc + (st.s1 - st.s0) / st.v, 0);
+        const r1 = g === groups - 1 ? recOut : Math.round(outT * fps);
+        const s1 = g === groups - 1 ? srcOut : Math.round(last.s1 * fps);
+        if (r1 > r0 && s1 > s0) {
+          substeps.push({ srcIn: s0, srcOut: s1, recIn: r0, recOut: r1, speed: round2(((s1 - s0) / (r1 - r0)) * 100) });
+          r0 = r1;
+          s0 = s1;
+        }
+      }
+      clips.push({ index, srcIn, srcOut, recIn, recOut, speed: round2(((srcOut - srcIn) / (recOut - recIn)) * 100), timeMap: pts, substeps, audio });
+    }
+  }
+  return clips;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -284,7 +391,8 @@ function zoomKeys(
   return keys;
 }
 
-function recordFrameToEditTime(plan: Pick<CutPlan, "keep">, edits: SnappedEdit[], f: number, rate: FrameRate): number {
+function recordFrameToEditTime(plan: Pick<CutPlan, "keep"> & Partial<Pick<CutPlan, "ramps" | "freezes">>, edits: SnappedEdit[], f: number, rate: FrameRate): number {
+  if (hasRetiming(plan)) return f / rate.fps;
   const e = edits.find((x) => f >= x.recIn && f < x.recOut) ?? edits[edits.length - 1];
   const src = (e.srcIn + (f - e.recIn)) / rate.fps;
   let acc = 0;
@@ -302,11 +410,12 @@ function seqName(input: InterchangeInput): string {
 function prepare(input: InterchangeInput) {
   const rate = frameRate(input.info.fps);
   const mediaFrames = input.source?.frames ?? (input.info.duration ? Math.round(input.info.duration * rate.fps) : undefined);
-  const edits = snapPlan(input.plan, rate, mediaFrames);
+  const clips = recordClips(input.plan, rate, mediaFrames);
+  const edits: SnappedEdit[] = clips.map(({ index, srcIn, srcOut, recIn, recOut }) => ({ index, srcIn, srcOut, recIn, recOut }));
   if (!edits.length) throw new Error("Cut plan keeps nothing longer than one frame");
-  const total = edits[edits.length - 1].recOut;
+  const total = Math.max(...clips.map((c) => Math.max(c.recOut, c.audio && c.audio !== "same" ? c.audio.recOut : 0)));
   const channels = input.info.hasAudio ? Math.max(1, Math.min(2, input.source?.audioChannels ?? 2)) : 0;
-  return { rate, edits, total, mediaFrames, channels, audioRate: input.source?.audioRate ?? 48000 };
+  return { rate, edits, clips, total, mediaFrames, channels, audioRate: input.source?.audioRate ?? 48000 };
 }
 
 // ---------------------------------------------------------------------------
@@ -317,13 +426,25 @@ const rateXml = (r: FrameRate) => el("rate", {}, [t("timebase", r.timebase), t("
 
 /** Final Cut Pro 7 XML (xmeml version 5): imports into Premiere Pro and DaVinci Resolve. */
 export function toFCP7(input: InterchangeInput): string {
-  const { rate, edits, total, mediaFrames, channels, audioRate } = prepare(input);
+  const { rate, edits, clips, total, mediaFrames, channels, audioRate } = prepare(input);
   const { info } = input;
   const name = sourceName(input);
   const W = info.width ?? 1920;
   const H = info.height ?? 1080;
-  const n = edits.length;
   const hasV = info.hasVideo;
+  // Link groups: one picture item and its sound (same range, a split range, or none). Variable-speed
+  // ramps expand into their constant-speed steps.
+  type Seg = { srcIn: number; srcOut: number; recIn: number; recOut: number; speed?: number; reverse?: boolean };
+  const groups: { e: SnappedEdit; v: Seg; a: Seg | null }[] = [];
+  clips.forEach((c, k) => {
+    const e = edits[k];
+    const parts: Seg[] = c.substeps?.length ? c.substeps : [{ srcIn: c.srcIn, srcOut: c.srcOut, recIn: c.recIn, recOut: c.recOut, speed: c.speed, reverse: c.reverse }];
+    for (const v of parts) {
+      const a: Seg | null = c.audio === null ? null : c.audio === "same" ? v : { ...c.audio };
+      groups.push({ e, v, a });
+    }
+  });
+  const n = groups.length;
   // clipitem ids: video 1..n, audio track c: c*n+1..(c+1)*n
   const vId = (j: number) => `clipitem-${j + 1}`;
   const aId = (c: number, j: number) => `clipitem-${(hasV ? n : 0) + c * n + j + 1}`;
@@ -354,14 +475,37 @@ export function toFCP7(input: InterchangeInput): string {
     ]);
   };
 
+  // Position of each group's sound item in the audio tracks (groups without sound have none).
+  const aIndex: number[] = [];
+  groups.reduce((acc, g, j) => ((aIndex[j] = g.a ? acc + 1 : 0), g.a ? acc + 1 : acc), 0);
   const links = (j: number) => {
     const out: string[] = [];
     if (hasV) out.push(el("link", {}, [t("linkclipref", vId(j)), t("mediatype", "video"), t("trackindex", 1), t("clipindex", j + 1)]));
-    for (let c = 0; c < channels; c++) {
-      out.push(el("link", {}, [t("linkclipref", aId(c, j)), t("mediatype", "audio"), t("trackindex", c + 1), t("clipindex", j + 1), t("groupindex", 1)]));
+    if (groups[j].a) {
+      for (let c = 0; c < channels; c++) {
+        out.push(el("link", {}, [t("linkclipref", aId(c, j)), t("mediatype", "audio"), t("trackindex", c + 1), t("clipindex", aIndex[j]), t("groupindex", 1)]));
+      }
     }
     return out.length > 1 ? out : [];
   };
+
+  /** Premiere / FCP7 "Time Remap" (constant speed, optional reverse). */
+  const speedFilter = (sg: Seg, mediatype: "video" | "audio") =>
+    (sg.speed !== undefined && Math.abs(sg.speed - 100) > 0.01) || sg.reverse
+      ? el("filter", {}, [
+          el("effect", {}, [
+            t("name", "Time Remap"),
+            t("effectid", "timeremap"),
+            t("effectcategory", "motion"),
+            t("effecttype", "motion"),
+            t("mediatype", mediatype),
+            el("parameter", { authoringApp: "PremierePro" }, [t("parameterid", "variablespeed"), t("name", "variablespeed"), t("valuemin", 0), t("valuemax", 1), t("value", 0)]),
+            el("parameter", { authoringApp: "PremierePro" }, [t("parameterid", "speed"), t("name", "speed"), t("valuemin", -100000), t("valuemax", 100000), t("value", sg.speed ?? 100)]),
+            el("parameter", { authoringApp: "PremierePro" }, [t("parameterid", "reverse"), t("name", "reverse"), t("value", sg.reverse ? "TRUE" : "FALSE")]),
+            el("parameter", { authoringApp: "PremierePro" }, [t("parameterid", "frameblending"), t("name", "frameblending"), t("value", "FALSE")]),
+          ]),
+        ])
+      : undefined;
 
   const motionFilter = (e: SnappedEdit) => {
     const keys = zoomKeys(input, edits, e, rate);
@@ -382,28 +526,29 @@ export function toFCP7(input: InterchangeInput): string {
     ]);
   };
 
-  const clip = (id: string, e: SnappedEdit, j: number, kind: "video" | "audio", trackIndex: number) =>
+  const clip = (id: string, sg: Seg, e: SnappedEdit, j: number, kind: "video" | "audio", trackIndex: number) =>
     el("clipitem", { id }, [
       t("masterclipid", "masterclip-1"),
       t("name", name),
       t("enabled", "TRUE"),
       mediaFrames ? t("duration", mediaFrames) : undefined,
       rateXml(rate),
-      t("start", e.recIn),
-      t("end", e.recOut),
-      t("in", e.srcIn),
-      t("out", e.srcOut),
+      t("start", sg.recIn),
+      t("end", sg.recOut),
+      t("in", sg.srcIn),
+      t("out", sg.srcOut),
       fileXml(),
       el("sourcetrack", {}, [t("mediatype", kind), t("trackindex", trackIndex)]),
-      kind === "video" ? motionFilter(e) : undefined,
+      kind === "video" && sg === groups[j].v && sg.srcIn === e.srcIn ? motionFilter(e) : undefined,
+      speedFilter(sg, kind),
       ...links(j),
     ]);
 
   const videoTracks: string[] = [];
-  if (hasV) videoTracks.push(el("track", {}, edits.map((e, j) => clip(vId(j), e, j, "video", 1))));
+  if (hasV) videoTracks.push(el("track", {}, groups.map((g, j) => clip(vId(j), g.v, g.e, j, "video", 1))));
   const audioTracks: string[] = [];
   for (let c = 0; c < channels; c++) {
-    audioTracks.push(el("track", {}, edits.map((e, j) => clip(aId(c, j), e, j, "audio", c + 1))));
+    audioTracks.push(el("track", {}, groups.flatMap((g, j) => (g.a ? [clip(aId(c, j), g.a, g.e, j, "audio", c + 1)] : []))));
   }
 
   const markers = (input.markers ?? []).map((m) => {
@@ -454,7 +599,7 @@ function gcd(a: number, b: number): number {
 
 /** FCPXML 1.10: Final Cut Pro 10.6+ and DaVinci Resolve. */
 export function toFCPXML(input: InterchangeInput): string {
-  const { rate, edits, total, mediaFrames, channels, audioRate } = prepare(input);
+  const { rate, edits, clips: recClips, total, mediaFrames, channels, audioRate } = prepare(input);
   const { info } = input;
   const W = info.width ?? 1920;
   const H = info.height ?? 1080;
@@ -505,6 +650,28 @@ export function toFCPXML(input: InterchangeInput): string {
       const dur = m.duration ? Math.max(1, editTimeToFrame(input.plan, edits, m.time + m.duration, rate) - f) : 1;
       return [el("marker", { start: local(Math.min(f, e.recOut - 1)), duration: fcpTime(dur, rate), value: m.name, note: m.comment })];
     });
+    const rc = recClips[j];
+    // Split edit: the sound covers a different source range (FCPXML audioStart / audioDuration).
+    const split = rc.audio && rc.audio !== "same" ? rc.audio : undefined;
+    // Retimed clip: timeMap of (clip-local time, source time) points.
+    let timeMap: string | undefined;
+    if (rc.speed !== undefined || rc.reverse) {
+      const len = e.recOut - e.recIn;
+      const srcLen = rc.srcOut - rc.srcIn;
+      const pts = rc.timeMap?.length
+        ? rc.timeMap.map((p) => ({ rec: Math.round(p.rec), src: Math.round(p.src) }))
+        : rc.reverse
+          ? [{ rec: 0, src: srcLen }, { rec: len, src: 0 }]
+          : srcLen <= 1
+            ? [{ rec: 0, src: 0 }, { rec: len, src: 0 }]
+            : [{ rec: 0, src: 0 }, { rec: len, src: srcLen }];
+      pts[pts.length - 1].rec = len;
+      timeMap = el(
+        "timeMap",
+        {},
+        pts.map((p) => el("timept", { time: local(e.recIn + p.rec), value: fcpTime(srcTcFrames + rc.srcIn + p.src, rate), interp: rc.timeMap ? "smooth2" : "linear" })),
+      );
+    }
     return el(
       "asset-clip",
       {
@@ -515,9 +682,12 @@ export function toFCPXML(input: InterchangeInput): string {
         duration: fcpTime(e.recOut - e.recIn, rate),
         format: info.hasVideo ? "r1" : undefined,
         tcFormat,
-        audioRole: channels ? "dialogue" : undefined,
+        audioRole: channels && rc.audio !== null ? "dialogue" : undefined,
+        audioStart: split && channels ? fcpTime(srcTcFrames + split.srcIn, rate) : undefined,
+        audioDuration: split && channels ? fcpTime(split.srcOut - split.srcIn, rate) : undefined,
+        srcEnable: rc.audio === null && channels && info.hasVideo ? "video" : undefined,
       },
-      [transform, ...captions, ...markers],
+      [timeMap, transform, ...captions, ...markers],
     );
   });
 
@@ -573,7 +743,7 @@ export function reelName(path: string): string {
 
 /** CMX 3600 EDL (one picture track + A1/A2), cut-only, frame-accurate. */
 export function toEDL(input: InterchangeInput): string {
-  const { rate, edits, channels } = prepare(input);
+  const { rate, edits, clips, channels } = prepare(input);
   const startTc = input.startTimecode ?? (rate.dropFrame ? "01:00:00;00" : "01:00:00:00");
   const recBase = timecodeToFrames(startTc, rate);
   const srcBase = input.source?.timecode ? safeTc(input.source.timecode, rate) : 0;
@@ -583,12 +753,19 @@ export function toEDL(input: InterchangeInput): string {
   const reel = reelName(input.plan.source);
   const title = seqName(input).replace(/[\r\n]+/g, " ").slice(0, 70);
   const lines = [`TITLE: ${title}`, `FCM: ${rate.dropFrame ? "DROP FRAME" : "NON-DROP FRAME"}`, ""];
+  if (input.plan.splits?.length) lines.splice(2, 0, `* NOTE: ${input.plan.splits.length} SPLIT EDITS (J/L) ARE NOT REPRESENTED IN CMX 3600; USE FCP7 XML OR FCPXML`);
   const markers = [...(input.markers ?? [])].map((m) => ({ m, f: editTimeToFrame(input.plan, edits, m.time, rate) }));
   edits.forEach((e, i) => {
     const num = String(i + 1).padStart(3, "0");
     lines.push(
       `${num}  ${reel.padEnd(8)} ${track.padEnd(5)} C        ${tc(srcBase + e.srcIn)} ${tc(srcBase + e.srcOut)} ${tc(recBase + e.recIn)} ${tc(recBase + e.recOut)}`,
     );
+    // Motion (speed) effect: CMX 3600 M2 line, speed in frames per second (negative = reverse).
+    const sp = clips[i]?.speed;
+    if (sp !== undefined || clips[i]?.reverse) {
+      const fpsEff = ((clips[i].reverse ? -1 : 1) * ((sp ?? 100) / 100) * rate.timebase).toFixed(1).padStart(5, "0");
+      lines.push(`M2   ${reel.padEnd(8)}       ${fpsEff}    ${tc(srcBase + e.srcIn)}`);
+    }
     lines.push(`* FROM CLIP NAME: ${basename(input.plan.source)}`);
     for (const { m, f } of markers) {
       const last = i === edits.length - 1;

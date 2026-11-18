@@ -11,7 +11,21 @@ export interface MotionModule {
     height?: number;
     fps?: number;
     duration?: number;
+    /** Template folder outside templates/ (user / Figma templates). */
+    dir?: string;
   }): Promise<{ output: string }>;
+  snapshotTemplate?(o: {
+    template: string;
+    dir?: string;
+    params?: Record<string, unknown>;
+    times: number[];
+    outDir: string;
+    width?: number;
+    height?: number;
+    duration?: number;
+    background?: string;
+  }): Promise<string[]>;
+  templatesDir?(): string;
   renderCaptionOverlay(o: {
     cues: CaptionCue[];
     style?: string;

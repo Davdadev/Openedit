@@ -33,6 +33,9 @@ function coll(arr, countName) {
 
 let nextId = 1;
 
+/** Graphics Parameters of fake .mogrt files, keyed by absolute path: { duration, params: [{ name, value }] }. */
+export const MOGRT_PARAMS = new Map();
+
 function makeParam(displayName, value) {
   const keys = [];
   let varying = false;
@@ -193,6 +196,35 @@ export function makeSequence(project, name, opts = {}) {
       seq._markers.push(m);
       return m;
     },
+  };
+  // MOGRT placement: importMGT(path, ticks, videoTrackIndex, audioTrackIndex) puts a graphic
+  // clip on the video track whose Graphics Parameters come from MOGRT_PARAMS[path].
+  seq.importMGT = (filePath, ticks, vIdx) => {
+    if (!fs.existsSync(filePath)) return null;
+    const spec = MOGRT_PARAMS.get(filePath) || { duration: 5, params: [] };
+    const track = seq._video[vIdx];
+    if (!track) throw new Error("no video track " + vIdx);
+    const startSec = Number(ticks) / TPS;
+    const item = { name: path.basename(filePath, ".mogrt"), _path: filePath, duration: spec.duration, hasVideo: true, hasAudio: false };
+    const ti = makeTrackItem(item, "video", startSec, 0, spec.duration, track);
+    const params = spec.params.map((p) => {
+      const prm = makeParam(p.name, p.value);
+      prm.setColorValue = (a, r, g, b) => {
+        prm.colorValue = [r, g, b, a];
+      };
+      return prm;
+    });
+    ti._mgtParams = params;
+    ti.getMGTComponent = () => ({
+      displayName: "Graphic Parameters",
+      properties: Object.assign(coll(params, "numItems"), {
+        getParamForDisplayName: (n) => params.find((x) => x.displayName === n) || null,
+      }),
+    });
+    track._clips.push(ti);
+    track._clips.sort((a, b) => toSec(a.start) - toSec(b.start));
+    seq._recalcEnd();
+    return ti;
   };
   seq.getSettings = () => ({ videoFrameRate: time(1 / (opts.fps || 25)), videoFrameWidth: seq.frameSizeHorizontal });
   seq.clone = () => {

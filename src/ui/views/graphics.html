@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenEdit motion graphics</title>
+<!--#shared-css-->
+<style>
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin: -2px 0 12px; }
+  .fchip {
+    height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--color-border-secondary); background: transparent; color: var(--color-text-secondary);
+    font: inherit; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background 0.2s, color 0.2s, border-color 0.2s;
+  }
+  .fchip:hover { color: var(--color-text-primary); border-color: var(--color-border-primary); }
+  .fchip.on { background: var(--color-text-primary); color: var(--color-background-primary); border-color: transparent; }
+  .fchip .num { opacity: 0.7; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; max-height: 420px; padding: 1px; }
+  .grid.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 36px), transparent); mask-image: linear-gradient(#000 calc(100% - 36px), transparent); }
+  .tile {
+    position: relative; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--color-background-secondary); cursor: pointer;
+    border: 1px solid var(--color-border-tertiary); transition: transform 0.25s var(--oe-ease), box-shadow 0.25s, border-color 0.2s; animation: oe-in 0.5s var(--oe-ease) both;
+  }
+  .tile:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14); border-color: var(--color-border-secondary); }
+  .tile.sel { border-color: var(--oe-accent); box-shadow: 0 0 0 1px var(--oe-accent) inset; }
+  .tile.off { cursor: default; }
+  .tile.off .th img { filter: grayscale(0.85) brightness(0.6); }
+  .th { position: relative; aspect-ratio: 16 / 9; background: repeating-conic-gradient(light-dark(#e7e5df, #2c2b29) 0 25%, light-dark(#f2f1ec, #232221) 0 50%) 0 0 / 14px 14px; overflow: hidden; }
+  .th img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: transform 0.8s var(--oe-ease); }
+  .tile:hover .th img { transform: scale(1.035); }
+  .th .ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-text-tertiary); font-size: 11px; text-align: center; padding: 8px; }
+  .badge { position: absolute; z-index: 2; height: 19px; padding: 0 7px; border-radius: 6px; display: inline-flex; align-items: center; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .k-mogrt { background: color-mix(in srgb, #4a37d8 85%, transparent); }
+  .k-aep { background: color-mix(in srgb, #6b3fa0 85%, transparent); }
+  .k-demo { background: color-mix(in srgb, #8a2a2a 85%, transparent); }
+  .k-hyperframes { background: color-mix(in srgb, #0f7a5a 85%, transparent); }
+  .k-user { background: color-mix(in srgb, #b45309 88%, transparent); }
+  .kb { top: 7px; left: 7px; }
+  .db { bottom: 7px; right: 7px; background: rgba(15, 15, 15, 0.55); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .fb { bottom: 7px; left: 7px; background: color-mix(in srgb, #b26a00 88%, transparent); }
+  .meta { padding: 8px 10px 9px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .nm { font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ct { font-size: 11px; color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .detail { margin-top: 14px; border-top: 1px solid var(--color-border-tertiary); padding-top: 14px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; animation: oe-in 0.45s var(--oe-ease) both; }
+  @media (max-width: 560px) { .detail { grid-template-columns: 1fr; } }
+  .strip { border-radius: 10px; overflow: hidden; background: #111; aspect-ratio: auto; }
+  .strip img { width: 100%; display: block; }
+  .strip .ph svg { width: 18px; height: 18px; flex: none; }
+  .strip .ph { padding: 30px 12px; text-align: center; color: #9a9a96; font-size: 12px; display: flex; gap: 8px; justify-content: center; align-items: center; }
+  .dh { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .dh h2 { margin: 0; font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em; }
+  .dnote { font-size: 11.5px; color: var(--color-text-secondary); line-height: 1.45; margin: 6px 0 10px; }
+  .dnote.warn { color: var(--color-text-warning); }
+  .form { display: grid; gap: 8px; max-height: 300px; overflow: auto; padding-right: 2px; }
+  .f { display: grid; grid-template-columns: 108px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12px; }
+  .f label { color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .f input[type="text"], .f input[type="number"], .f select {
+    width: 100%; height: 28px; border-radius: 8px; border: 1px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-primary);
+    font: inherit; font-size: 12px; padding: 0 8px; box-sizing: border-box;
+  }
+  .f input[type="color"] { width: 40px; height: 26px; padding: 0; border: 1px solid var(--color-border-secondary); border-radius: 7px; background: none; }
+  .f .row { display: flex; gap: 8px; align-items: center; }
+  .f input[type="range"] { flex: 1; accent-color: var(--oe-accent); }
+  .grp { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-text-tertiary); margin-top: 4px; }
+  .acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .at { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-secondary); }
+  .at input { width: 72px; height: 28px; border-radius: 8px; border: 1px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-primary); font: inherit; font-size: 12px; padding: 0 8px; }
+  .placed { margin-top: 10px; display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--oe-ok); }
+  .placed svg { width: 15px; height: 15px; flex: none; margin-top: 1px; }
+  .empty { padding: 26px 10px; text-align: center; color: var(--color-text-secondary); }
+</style>
+</head>
+<body>
+<div id="app" class="oe-card loading-card">
+  <div class="loading-label"><span class="spinner"></span><span id="loading-text">Loading motion graphics…</span></div>
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px">
+    <div class="skeleton" style="aspect-ratio: 16/12"></div><div class="skeleton" style="aspect-ratio: 16/12"></div><div class="skeleton" style="aspect-ratio: 16/12"></div><div class="skeleton" style="aspect-ratio: 16/12"></div>
+  </div>
+</div>
+<!--#shared-js-->
+<script>
+(function () {
+  "use strict";
+  var E = OE.esc;
+  var app = document.getElementById("app");
+  var data, sel = null, filter = "all", values = {}, strip = null, busy = false, placedText = "";
+  var KIND = { mogrt: "MOGRT", aep: "AE", demo: "LOCKED", hyperframes: "OPENEDIT", user: "MINE" };
+  var LOADING = { graphics_catalog: "Loading the graphics catalog…", preview_template: "Rendering preview frames…", create_motion_template: "Building your template and rendering a preview…", place_graphic: "Placing the graphic…", import_template_pack: "Indexing the template pack…" };
+
+  OE.on("input", function (a) {
+    if (data) return;
+    var name = OE.ctx.toolInfo && OE.ctx.toolInfo.tool && OE.ctx.toolInfo.tool.name;
+    if (LOADING[name]) document.getElementById("loading-text").textContent = LOADING[name];
+  });
+  OE.on("result", function (res) {
+    var sc = res && res.structuredContent;
+    if ((res && res.isError) || !sc || sc.view !== "graphics") {
+      app.className = "oe-card";
+      app.innerHTML = '<div class="oe-head"><div class="oe-logo">' + OE.icon("spark") + '</div><div class="oe-title">Motion graphics</div></div><div class="error-box">' + E(OE.textOf(res) || "No graphics in this result.") + "</div>";
+      OE.resize();
+      return;
+    }
+    data = sc;
+    data.items = data.items || [];
+    if (data.mode !== "catalog" && data.mode !== "imported" && data.items[0]) select(0, true);
+    if (sc.preview && sc.preview.strip) strip = sc.preview.strip;
+    if (data.placed) placedText = data.placed.text || "Placed";
+    render();
+  });
+
+  function visible() {
+    return data.items
+      .map(function (it, i) { return { it: it, i: i }; })
+      .filter(function (x) {
+        if (filter === "all") return true;
+        if (filter === "usable") return x.it.usable;
+        return x.it.category === filter;
+      });
+  }
+
+  function tile(it, i) {
+    var off = !it.usable;
+    return '<div class="tile' + (off ? " off" : "") + (sel === i ? " sel" : "") + '" data-i="' + i + '" title="' + E(it.note || it.description || "") + '" style="animation-delay:' + Math.min(i * 40, 500) + 'ms">' +
+      '<div class="th">' + (it.thumb ? '<img alt="" src="' + it.thumb + '" />' : '<div class="ph">' + E(it.name) + "</div>") +
+      '<span class="badge kb k-' + E(it.kind) + '">' + (KIND[it.kind] || E(it.kind)) + "</span>" +
+      (it.duration ? '<span class="badge db">' + Number(it.duration).toFixed(1) + "s</span>" : "") +
+      (it.missingFonts && it.missingFonts.length ? '<span class="badge fb" title="Missing fonts: ' + E(it.missingFonts.join(", ")) + '">FONTS</span>' : "") +
+      "</div>" +
+      '<div class="meta"><div class="nm">' + E(it.name) + '</div><div class="ct">' + E(it.category) + " · " + E(it.pack || "") + "</div></div></div>";
+  }
+
+  function field(p) {
+    var v = values[p.id] !== undefined ? values[p.id] : p["default"];
+    var id = "f-" + p.id;
+    var input;
+    if (p.type === "color") {
+      var hex = /^#[0-9a-f]{6}/i.test(String(v || "")) ? String(v).slice(0, 7) : "#ffffff";
+      input = '<div class="row"><input type="color" id="' + id + '" value="' + E(hex) + '" /><span class="mono" style="font-size:11px;color:var(--color-text-tertiary)">' + E(hex.toUpperCase()) + "</span></div>";
+    } else if (p.type === "slider" || p.type === "number" || p.type === "angle") {
+      var hasRange = typeof p.min === "number" && typeof p.max === "number" && p.max - p.min <= 2000;
+      input = hasRange
+        ? '<div class="row"><input type="range" id="' + id + '" min="' + p.min + '" max="' + p.max + '" step="any" value="' + E(v) + '" /><span class="num" style="width:40px;text-align:right">' + E(v) + "</span></div>"
+        : '<input type="number" id="' + id + '" value="' + E(v) + '" />';
+    } else if (p.type === "checkbox") {
+      input = '<input type="checkbox" id="' + id + '"' + (v === true || v === "true" ? " checked" : "") + " />";
+    } else if (p.type === "dropdown" && p.options && p.options.length) {
+      input = '<select id="' + id + '">' + p.options.map(function (o, k) { var on = typeof v === "number" ? k === v : o === v; return "<option" + (on ? " selected" : "") + ' value="' + E(o) + '">' + E(o) + "</option>"; }).join("") + "</select>";
+    } else if (p.type === "point") {
+      input = '<input type="text" id="' + id + '" value="' + E(Array.isArray(v) ? v.join(", ") : v || "") + '" placeholder="x, y" />';
+    } else if (p.type === "image") {
+      input = '<input type="text" id="' + id + '" value="' + E(v || "") + '" placeholder="/path/to/image.png" />';
+    } else {
+      input = '<input type="text" id="' + id + '" value="' + E(v == null ? "" : v) + '" />';
+    }
+    return '<div class="f"><label for="' + id + '" title="' + E(p.name) + '">' + E(p.name) + "</label>" + input + "</div>";
+  }
+
+  function readField(p) {
+    var el = document.getElementById("f-" + p.id);
+    if (!el) return undefined;
+    if (p.type === "checkbox") return el.checked;
+    if (p.type === "slider" || p.type === "number" || p.type === "angle") return Number(el.value);
+    if (p.type === "point") return String(el.value).split(",").map(function (s) { return Number(s.trim()); });
+    return el.value;
+  }
+
+  function detail() {
+    if (sel === null || !data.items[sel]) return "";
+    var it = data.items[sel];
+    var groups = [], lastGroup = null;
+    var form = (it.params || []).map(function (p) {
+      var head = p.group && p.group !== lastGroup ? '<div class="grp">' + E(p.group) + "</div>" : "";
+      lastGroup = p.group || lastGroup;
+      return head + field(p);
+    }).join("");
+    void groups;
+    var canPreview = true;
+    return '<div class="detail" id="detail"><div>' +
+      '<div class="strip">' + (strip ? '<img alt="Preview frames of ' + E(it.name) + '" src="' + strip + '" />' : '<div class="ph">' + OE.icon("film") + (it.usable || it.kind !== "demo" ? "Preview to see the animation frames" : "Locked demo: preview only") + "</div>") + "</div>" +
+      (it.description ? '<div class="dnote">' + E(it.description) + "</div>" : "") +
+      "</div><div>" +
+      '<div class="dh"><h2>' + E(it.name) + '</h2><span class="ct mono">' + E(it.id) + "</span></div>" +
+      (it.note ? '<div class="dnote' + (it.usable ? "" : " warn") + '">' + E(it.note) + "</div>" : "") +
+      (it.missingFonts && it.missingFonts.length ? '<div class="dnote warn">Missing fonts: ' + E(it.missingFonts.join(", ")) + "</div>" : "") +
+      (form ? '<div class="form">' + form + "</div>" : '<div class="dnote">No editable fields.</div>') +
+      '<div class="acts">' +
+      (it.usable ? '<span class="at">at <input type="number" id="at" min="0" step="0.1" value="' + E(values.__at != null ? values.__at : 0) + '" />s</span>' : "") +
+      (canPreview ? '<button class="btn" id="pv">' + OE.icon("play") + "Preview</button>" : "") +
+      (it.usable ? '<button class="btn primary" id="use">' + OE.icon("check") + "Use this</button>" : "") +
+      "</div>" +
+      (placedText ? '<div class="placed">' + OE.icon("check") + "<span>" + E(placedText) + "</span></div>" : "") +
+      "</div></div>";
+  }
+
+  function render() {
+    var d = data;
+    var cats = {};
+    d.items.forEach(function (it) { cats[it.category] = (cats[it.category] || 0) + 1; });
+    var usableN = d.items.filter(function (it) { return it.usable; }).length;
+    var title = d.mode === "imported" ? "Pack imported" : d.mode === "created" ? "Template created" : d.mode === "placed" ? "Graphic placed" : d.mode === "preview" ? "Template preview" : "Motion graphics";
+    var sub = d.mode === "imported" && d.pack ? E(d.pack.name) : d.query ? "“" + E(d.query) + "”" : d.host ? "for " + E(d.host) : "";
+    var list = visible();
+    var showGrid = d.mode === "catalog" || d.mode === "imported" || d.items.length > 1;
+    app.className = "oe-card";
+    app.innerHTML =
+      '<div class="oe-head"><div class="oe-logo">' + OE.icon("spark") + '</div><div class="oe-title">' + title + '</div><div class="oe-sub">' + sub + '</div><div class="oe-spacer"></div>' +
+      (d.total != null ? '<span class="chip"><b class="num">' + d.items.length + '</b> of <span class="num">' + d.total + "</span></span>" : "") + "</div>" +
+      (showGrid && d.items.length > 1
+        ? '<div class="filters"><button class="fchip' + (filter === "all" ? " on" : "") + '" data-f="all">All <span class="num">' + d.items.length + "</span></button>" +
+          (usableN && usableN < d.items.length ? '<button class="fchip' + (filter === "usable" ? " on" : "") + '" data-f="usable">Usable <span class="num">' + usableN + "</span></button>" : "") +
+          Object.keys(cats).slice(0, 8).map(function (c) { return '<button class="fchip' + (filter === c ? " on" : "") + '" data-f="' + E(c) + '">' + E(c) + ' <span class="num">' + cats[c] + "</span></button>"; }).join("") + "</div>"
+        : "") +
+      (showGrid ? (list.length ? '<div class="grid scroll" id="grid">' + list.map(function (x) { return tile(x.it, x.i); }).join("") + "</div>" : '<div class="empty">No templates match.</div>') : "") +
+      detail();
+    wire();
+    OE.resize();
+  }
+
+  function select(i, quiet) {
+    if (sel !== i) {
+      sel = i;
+      values = {};
+      strip = null;
+      placedText = "";
+    }
+    if (!quiet) render();
+  }
+
+  function collect(it) {
+    var out = {};
+    (it.params || []).forEach(function (p) {
+      var v = readField(p);
+      if (v === undefined) return;
+      var def = p["default"];
+      if (JSON.stringify(v) !== JSON.stringify(def) && !(v === "" && (def == null || def === ""))) out[p.id] = v;
+      values[p.id] = v;
+    });
+    return out;
+  }
+
+  function wire() {
+    document.querySelectorAll(".fchip").forEach(function (b) {
+      b.onclick = function () { filter = b.dataset.f; render(); };
+    });
+    document.querySelectorAll(".tile").forEach(function (el) {
+      el.onclick = function () { select(Number(el.dataset.i)); var dt = document.getElementById("detail"); if (dt && dt.scrollIntoView) dt.scrollIntoView({ block: "nearest", behavior: "smooth" }); };
+    });
+    document.querySelectorAll('.f input[type="range"]').forEach(function (r) {
+      r.oninput = function () { r.nextSibling.textContent = Math.round(Number(r.value) * 100) / 100; };
+    });
+    document.querySelectorAll('.f input[type="color"]').forEach(function (c) {
+      c.oninput = function () { c.nextSibling.textContent = c.value.toUpperCase(); };
+    });
+    var grid = document.getElementById("grid");
+    if (grid) {
+      var fade = function () { grid.classList.toggle("more", grid.scrollTop + grid.clientHeight < grid.scrollHeight - 4); };
+      grid.onscroll = fade;
+      fade();
+    }
+    var it = sel !== null ? data.items[sel] : null;
+    var pv = document.getElementById("pv");
+    if (pv && it) pv.onclick = function () { preview(it, pv); };
+    var use = document.getElementById("use");
+    if (use && it) use.onclick = function () { place(it, use); };
+  }
+
+  function preview(it, btn) {
+    if (busy) return;
+    var params = collect(it);
+    if (!OE.canCallTools()) {
+      OE.sendMessage("Preview the graphics template " + it.id + (Object.keys(params).length ? " with " + JSON.stringify(params) : "") + " (preview_template).").then(function () { OE.toast("Sent to Claude"); }, function () { OE.toast("The host did not accept the message"); });
+      return;
+    }
+    busy = true;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Rendering';
+    OE.callTool("preview_template", { id: it.id, params: it.kind === "hyperframes" || it.kind === "user" ? params : undefined }).then(function (r) {
+      var sc = r.structuredContent;
+      if (sc && sc.preview && sc.preview.strip) strip = sc.preview.strip;
+      busy = false;
+      render();
+    }).catch(function (e) {
+      busy = false;
+      btn.disabled = false;
+      btn.innerHTML = OE.icon("play") + "Preview";
+      OE.toast(e.message || "Preview failed");
+    });
+  }
+
+  function place(it, btn) {
+    if (busy) return;
+    var params = collect(it);
+    var atEl = document.getElementById("at");
+    var at = atEl ? Math.max(0, Number(atEl.value) || 0) : 0;
+    values.__at = at;
+    var args = { id: it.id, at: at };
+    if (Object.keys(params).length) args.params = params;
+    if (!OE.canCallTools()) {
+      OE.sendMessage("Place the graphics template " + it.id + " at " + at + "s" + (args.params ? " with " + JSON.stringify(args.params) : "") + " (place_graphic).").then(function () { OE.toast("Sent to Claude"); }, function () { OE.toast("The host did not accept the message"); });
+      return;
+    }
+    busy = true;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Placing';
+    OE.callTool("place_graphic", args).then(function (r) {
+      busy = false;
+      placedText = (r.structuredContent && r.structuredContent.placed && r.structuredContent.placed.text) || OE.textOf(r);
+      render();
+      OE.toast("Placed on the timeline");
+      OE.updateContext("The user placed the graphics template " + it.id + " at " + at + "s from the OpenEdit view" + (args.params ? " with " + JSON.stringify(args.params) : "") + ". " + placedText, { placed: args });
+    }).catch(function (e) {
+      busy = false;
+      btn.disabled = false;
+      btn.innerHTML = OE.icon("check") + "Use this";
+      OE.toast(e.message || "Could not place it");
+    });
+  }
+
+  OE.connect({ name: "openedit-graphics", version: "0.1.0" }).catch(function () {});
+})();
+</script>
+</body>
+</html>

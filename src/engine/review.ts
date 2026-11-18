@@ -5,6 +5,7 @@ import { FUNCTION_WORDS } from "./captions.js";
 import { run } from "./exec.js";
 import { probe, resolveMediaPath } from "./media.js";
 import { paths } from "./paths.js";
+import { type MusicUnder, type RhythmStats, formatRhythm, rhythmStats, rhythmWarnings } from "./review-rhythm.js";
 import { editDuration, editSegments, mapTime } from "./remap.js";
 import { type EnergyEnvelope, adaptiveLevels, analyzeEnergy, meanDb, smooth, spokenEnd } from "./vad.js";
 
@@ -398,6 +399,8 @@ export interface ReviewResult {
   wave?: Buffer;
   /** Human-readable legend for the contact sheet tiles. */
   legend: string;
+  /** Beat alignment, split edits, ramp sanity (review-rhythm.ts). */
+  rhythm?: RhythmStats;
 }
 
 async function measure(path: string, hasVideo: boolean): Promise<{ loudness: LoudnessStats; peakDb?: number; black: TimeRange[]; frozen: TimeRange[] }> {
@@ -417,7 +420,7 @@ async function measure(path: string, hasVideo: boolean): Promise<{ loudness: Lou
  */
 export async function reviewEdit(
   path: string,
-  info: Omit<EditInfo, "duration"> & { format?: "long" | "short"; outDir?: string },
+  info: Omit<EditInfo, "duration"> & { format?: "long" | "short"; outDir?: string; music?: MusicUnder },
 ): Promise<ReviewResult> {
   const abs = resolveMediaPath(path);
   const p = await probe(abs);
@@ -433,6 +436,13 @@ export async function reviewEdit(
   if (env && joins.length) ({ hot, jumps } = joinAudioIssues(env, joins));
   const media: MediaChecks = { duration: p.duration, width: p.width, height: p.height, ...meas, hotJoins: hot, jumpJoins: jumps };
   const warnings = reviewWarnings(stats, media, std);
+  // Rhythm: beat alignment of the cuts (when music is under the edit), J/L, speed ramps.
+  let rhythm: RhythmStats | undefined;
+  const fullPlan = info.plan as (CutPlan & Partial<Pick<CutPlan, "splits" | "ramps" | "freezes">>) | undefined;
+  if (info.music || fullPlan?.splits?.length || fullPlan?.ramps?.length || fullPlan?.freezes?.length) {
+    rhythm = rhythmStats(joins, { music: info.music, plan: fullPlan, fps: p.fps });
+    warnings.push(...rhythmWarnings(rhythm, { plan: fullPlan, dialogue: Boolean(info.transcript), singleCamera: true }));
+  }
 
   const outBase = abs.replace(/\.[^.]+$/, "");
   const work = mkdtempSync(join(paths.tmp(), "review-"));
@@ -518,11 +528,11 @@ export async function reviewEdit(
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
-  return { stats, media, warnings, sheet, sheetPath, wave, wavePath, legend: legend.join("\n") };
+  return { stats, media, warnings, sheet, sheetPath, wave, wavePath, legend: legend.join("\n"), rhythm };
 }
 
 /** Text report for review_edit. Pure. */
-export function formatReview(r: Pick<ReviewResult, "stats" | "media" | "warnings" | "legend">, path: string): string {
+export function formatReview(r: Pick<ReviewResult, "stats" | "media" | "warnings" | "legend"> & { rhythm?: RhythmStats }, path: string): string {
   const s = r.stats;
   const m = r.media;
   const pauses = s.joinPauses.map((p) => p.pause).sort((a, b) => a - b);
@@ -536,6 +546,7 @@ export function formatReview(r: Pick<ReviewResult, "stats" | "media" | "warnings
     `captions ${s.captions}${s.captionMaxCps !== undefined ? `: max ${s.captionMaxCps} cps, ${s.captionMinDuration}–${s.captionMaxDuration}s, longest line ${s.captionMaxLine} chars` : ""}`,
     `loudness ${m.loudness.integrated ?? "?"} LUFS, true peak ${m.loudness.truePeak ?? "?"} dBTP, LRA ${m.loudness.lra ?? "?"} LU, sample peak ${m.peakDb ?? "?"} dBFS`,
     `black ${m.black.length ? m.black.map((b) => `${fmt(b.start)}–${fmt(b.end)}`).join(", ") : "none"}; frozen ${m.frozen.length ? m.frozen.map((f) => `${fmt(f.start)}–${Number.isFinite(f.end) ? fmt(f.end) : "end"}`).join(", ") : "none"}`,
+    ...(r.rhythm && formatRhythm(r.rhythm) ? [`rhythm: ${formatRhythm(r.rhythm)}`] : []),
     "",
     r.warnings.length ? `WARNINGS (${r.warnings.length}):\n${r.warnings.map((w) => `- ${w}`).join("\n")}` : "No warnings against the editorial standards.",
   ];

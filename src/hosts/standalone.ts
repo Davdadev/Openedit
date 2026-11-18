@@ -6,6 +6,7 @@ import { mediaKind, probe, resolveMediaPath } from "../engine/media.js";
 import { paths, sidecarPath } from "../engine/paths.js";
 import { editDuration, editSegments } from "../engine/remap.js";
 import { planReframe, type ReframeMode } from "../engine/reframe.js";
+import { remapEditTime } from "../engine/speed.js";
 import {
   type AudioMixSpec,
   type Reframe,
@@ -42,6 +43,11 @@ export interface StandalonePlacement extends ClipPlacement {
   loop?: boolean;
   /** Audio: fade out over the last N seconds. */
   fadeOut?: number;
+  /**
+   * Video (b-roll): mix the clip's own natural sound under the dialogue, as a split edit: it may
+   * start `lead` seconds before the picture (J) and run `tail` seconds after it (L).
+   */
+  natSound?: { gainDb?: number; lead?: number; tail?: number };
   /**
    * Set when the clip is a motion-graphics render: lets the renderer re-render the template at
    * the output size (e.g. 9:16) instead of cropping a 16:9 graphic.
@@ -327,6 +333,58 @@ export class StandaloneHost implements EditorHost {
     return zooms.length;
   }
 
+  /**
+   * Replace the timeline's plan with a re-timed / re-snapped version of the SAME source (split
+   * edits, speed ramps, freeze frames, beat-snapped cuts) WITHOUT clearing captions, markers,
+   * zooms and placed clips: each edit-time item is moved through source time from the old timing
+   * to the new one. Items whose picture is no longer in the edit are dropped.
+   */
+  retime(plan: CutPlan): { moved: number; dropped: number } {
+    const before = this.requirePlan();
+    if (resolve(before.source) !== resolve(plan.source)) throw new Error("retime: the new plan is for another source; use apply_cuts");
+    const p = this.project;
+    let moved = 0;
+    let dropped = 0;
+    const map = (t: number) => remapEditTime(before, plan, t);
+    const range = <T extends { start: number; end: number }>(x: T): T | null => {
+      const a = map(x.start);
+      const b = map(x.end);
+      if (a === null && b === null) return null;
+      const start = a ?? Math.max(0, (b as number) - (x.end - x.start));
+      const end = b ?? start + (x.end - x.start);
+      if (Math.abs(start - x.start) > 1e-4 || Math.abs(end - x.end) > 1e-4) moved++;
+      return { ...x, start, end: Math.max(start + 0.01, end) };
+    };
+    const keep = <T>(arr: (T | null)[]) => arr.filter((x): x is T => {
+      if (x === null) dropped++;
+      return x !== null;
+    });
+    p.captions = keep(p.captions.map((c) => {
+      const r = range(c);
+      if (!r || !c.words) return r;
+      const before = moved;
+      const words = c.words.map((w) => range(w) ?? w);
+      moved = before; // count the caption once, not each word
+      return { ...r, words };
+    }));
+    p.zooms = keep(p.zooms.map(range));
+    p.markers = keep(p.markers.map((m) => {
+      const t = map(m.time);
+      if (t !== null && Math.abs(t - m.time) > 1e-4) moved++;
+      return t === null ? null : { ...m, time: t };
+    }));
+    p.placements = keep(p.placements.map((c) => {
+      // Music / SFX stay where they are on the timeline (cuts may have been snapped to them).
+      if (mediaKind(c.path) === "audio") return c;
+      const t = map(c.at);
+      if (t !== null && Math.abs(t - c.at) > 1e-4) moved++;
+      return t === null ? null : { ...c, at: t };
+    }));
+    p.plan = { ...plan, source: before.source };
+    this.save();
+    return { moved, dropped };
+  }
+
   async render(opts: { output: string; preset?: string }): Promise<{ output: string }> {
     const r = await this.renderTimeline(opts);
     return { output: r.output };
@@ -367,6 +425,22 @@ export class StandaloneHost implements EditorHost {
           fadeOut: c.fadeOut,
         });
         continue;
+      }
+      if (c.natSound && mediaKind(c.path) === "video") {
+        // B-roll natural sound as a split edit: lead before the picture (J), tail after it (L).
+        const lead = Math.max(0, Math.min(c.natSound.lead ?? 0, c.at, c.sourceIn ?? 0));
+        const tail = Math.max(0, c.natSound.tail ?? 0);
+        const srcIn = (c.sourceIn ?? 0) - lead;
+        const span = c.sourceOut !== undefined ? c.sourceOut - (c.sourceIn ?? 0) : (c.duration ?? 3);
+        audio.push({
+          path: c.path,
+          at: c.at - lead,
+          sourceIn: srcIn,
+          sourceOut: srcIn + lead + span + tail,
+          gainDb: c.natSound.gainDb ?? -18,
+          fadeIn: lead > 0 ? Math.min(0.25, lead) : 0.03,
+          fadeOut: Math.min(0.4, Math.max(0.05, tail)),
+        });
       }
       const spec: VideoOverlaySpec = { path: c.path, at: c.at, sourceIn: c.sourceIn, sourceOut: c.sourceOut, duration: c.duration };
       if (info.hasVideo) {

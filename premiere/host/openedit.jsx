@@ -904,7 +904,7 @@
   }
   OE.hostDir = root ? root.fsName : "";
 
-  var parts = ["oe-read.jsx", "oe-cut.jsx", "oe-edit.jsx", "oe-render.jsx"];
+  var parts = ["oe-read.jsx", "oe-cut.jsx", "oe-edit.jsx", "oe-render.jsx", "oe-graphics.jsx"];
   for (var p = 0; p < parts.length; p++) {
     if (!root) {
       OE.loadErrors[OE.loadErrors.length] = parts[p] + ": host folder not found";

@@ -114,6 +114,18 @@ If an effect has no reason you could say out loud, remove it.
 
 Tool-by-tool recipes and argument choices: [references/tool-recipes.md](references/tool-recipes.md).
 
+## Beyond the clean cut
+
+A clean cut is the floor, not the goal. When the piece calls for more, use the specialist skill
+first, and only where it serves the story:
+
+- **Rhythm** (music, montage, pacing, J/L cuts, speed ramps, cutting to the beat):
+  openedit-rhythm.
+- **Footage** (what is in the shots, b-roll that fits the line, match cuts, multicam):
+  openedit-shots. Run `analyze_footage` before choosing any b-roll.
+- **Graphics** (titles, lower thirds, the user's template packs, Figma designs):
+  openedit-motion-design. Check `graphics_catalog` before inventing a new graphic.
+
 ## Reporting to the user
 
 Say what you changed and why in editor language ("cut the 40 s setup before the first point,

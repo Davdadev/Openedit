@@ -149,6 +149,25 @@ class FakeTimeline(object):
     def GetMarkers(self):
         return dict(self.markers)
 
+    # ---- Fusion titles (graphics) ----
+    def GetStartTimecode(self):
+        return "01:00:00:00"
+
+    def SetCurrentTimecode(self, tc):
+        self.current_timecode = tc
+        return True
+
+    def InsertFusionTitleIntoTimeline(self, name):
+        if name != "Text+":
+            return None
+        h, m, s_, f = [int(x) for x in getattr(self, "current_timecode", "01:00:00:00").split(":")]
+        base = int(round(self.fps))
+        frame = ((h * 3600 + m * 60 + s_) * base) + f
+        item = FakeFusionTitleItem(self, frame, int(round(5 * self.fps)))
+        self.tracks["video"][0].append(item)
+        self.fusion_titles = getattr(self, "fusion_titles", []) + [item]
+        return item
+
     def track_end(self, kind, index):
         track = self.tracks[kind][index - 1]
         return max([self.start_frame] + [it.GetEnd() for it in track])
@@ -376,3 +395,78 @@ class FakeResolve(object):
         tl.tracks["audio"][0].append(FakeTimelineItem(mpi, 90000, 250, 50, 300, "audio", 1, 25.0))
         tl.markers[125] = {"color": "Red", "name": "Intro", "note": "hello", "duration": 1}
         return r
+
+
+class FakeFusionTool(object):
+    def __init__(self, tool_id):
+        self.ID = tool_id
+        self.inputs = {}
+        self.modifiers = {}
+        self.keys = {}
+
+    def SetInput(self, key, value, frame=None):
+        if frame is None:
+            self.inputs[key] = value
+        else:
+            if key not in self.modifiers:
+                raise RuntimeError("input %s is not animated" % key)
+            self.keys.setdefault(key, []).append((frame, value))
+        return True
+
+    def AddModifier(self, key, modifier):
+        self.modifiers[key] = modifier
+        return True
+
+
+class FakeFusionComp(object):
+    def __init__(self):
+        self.tools = {"Template": FakeFusionTool("TextPlus")}
+
+    def FindTool(self, name):
+        return self.tools.get(name)
+
+    def GetToolList(self, selected=False, tool_type=None):
+        return dict((i + 1, t) for i, t in enumerate(t for t in self.tools.values() if tool_type in (None, t.ID)))
+
+
+class FakeFusionTitleItem(object):
+    def __init__(self, timeline, start, duration):
+        self.timeline = timeline
+        self.start = start
+        self.duration = duration
+        self.track = 1
+        self.comp = FakeFusionComp()
+        self.media_pool_item = None
+
+    def GetName(self):
+        return "Text+"
+
+    def GetStart(self, subframe=False):
+        return self.start
+
+    def GetEnd(self, subframe=False):
+        return self.start + self.duration
+
+    def GetDuration(self, subframe=False):
+        return self.duration
+
+    def GetMediaPoolItem(self):
+        return None
+
+    def SetPosition(self, pos, move_linked=True, subframe=False):
+        tracks = self.timeline.tracks["video"]
+        if "trackIndex" in pos:
+            idx = int(pos["trackIndex"])
+            if idx > len(tracks):
+                return False
+            for t in tracks:
+                if self in t:
+                    t.remove(self)
+            tracks[idx - 1].append(self)
+            self.track = idx
+        if "startFrame" in pos:
+            self.start = int(pos["startFrame"])
+        return True
+
+    def GetFusionCompByIndex(self, index):
+        return self.comp if index == 1 else None

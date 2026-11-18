@@ -6,6 +6,9 @@ import { run } from "./exec.js";
 import { mediaKind, probe, resolveMediaPath } from "./media.js";
 import { cropSize, planReframe, type ReframeMode, type ReframePlan } from "./reframe.js";
 import { editDuration } from "./remap.js";
+import { splitRanges } from "./jl.js";
+import { type Montage, fitFilter } from "./music.js";
+import { type TimePiece, atempoChain, audioSteps, hasRetiming, setptsExpression, timePieces } from "./speed.js";
 
 export type Reframe = "9:16" | "1:1" | "16:9" | "4:5";
 export type RenderQuality = "draft" | "final";
@@ -56,6 +59,8 @@ export interface AudioMixSpec {
   loop?: boolean;
   /** Fade out over the last N seconds. */
   fadeOut?: number;
+  /** Fade in over the first N seconds (e.g. b-roll natural sound leading its picture). */
+  fadeIn?: number;
 }
 
 export interface RenderOptions {
@@ -236,6 +241,152 @@ export function audioJoinChain(
   return lines;
 }
 
+const n6 = (n: number) => String(Math.round(n * 1e6) / 1e6);
+
+/**
+ * The plan's pieces with split edits applied to their outer edges: the first piece of keep i
+ * starts at the split-adjusted range start, the last ends at its end. Splits never touch a
+ * retimed edge (normalizeSplits), so only "normal" pieces move.
+ */
+function splitPieces(plan: CutPlan, fps: number, track: "video" | "audio"): TimePiece[][] {
+  const ranges = splitRanges(plan)[track];
+  const pieces = timePieces(plan, fps);
+  return plan.keep.map((_, i) => {
+    const mine = pieces.filter((p) => p.keep === i).map((p) => ({ ...p }));
+    if (!mine.length) return mine;
+    const first = mine[0];
+    const last = mine[mine.length - 1];
+    if (first.kind === "normal") first.srcStart = ranges[i].start;
+    if (last.kind === "normal") last.srcEnd = ranges[i].end;
+    return mine;
+  });
+}
+
+const pieceLen = (p: TimePiece) =>
+  p.kind === "normal" ? p.srcEnd - p.srcStart : p.kind === "freeze" ? p.editEnd - p.editStart : (p.steps ?? []).reduce((a, st) => a + (st.s1 - st.s0) / st.v, 0);
+
+/**
+ * Picture of a retimed / split edit: one trim per piece. Ramps re-time frames with a piecewise
+ * setpts (frame blending or motion interpolation optional for slow motion), freezes clone one
+ * frame, reverse plays a range backwards; every non-plain piece is resampled to the source rate
+ * and padded/trimmed to an exact frame count so picture and sound stay in sync. Pure.
+ */
+export function pieceVideoChain(plan: CutPlan, fps: number, outLabel: string): string[] {
+  const lines: string[] = [];
+  const labels: string[] = [];
+  const F = n3(fps);
+  splitPieces(plan, fps, "video").flat().forEach((p, k) => {
+    const label = `vp${k}`;
+    labels.push(`[${label}]`);
+    const frames = Math.max(1, Math.round(pieceLen(p) * fps));
+    const exact = `fps=${F},tpad=stop_mode=clone:stop_duration=${n3(2 / fps)},trim=end_frame=${frames},setpts=PTS-STARTPTS`;
+    if (p.kind === "normal") {
+      lines.push(`[0:v:0]trim=start=${n6(p.srcStart)}:end=${n6(p.srcEnd)},setpts=PTS-STARTPTS[${label}]`);
+    } else if (p.kind === "freeze") {
+      lines.push(
+        `[0:v:0]trim=start=${n6(p.srcStart)}:duration=${n3(4 / fps)},setpts=PTS-STARTPTS,trim=end_frame=1,` +
+          `tpad=stop_mode=clone:stop_duration=${n6(pieceLen(p) + 1 / fps)},${exact}[${label}]`,
+      );
+    } else if (p.kind === "reverse") {
+      const v = p.steps?.[0].v ?? 1;
+      lines.push(
+        `[0:v:0]trim=start=${n6(p.srcStart)}:end=${n6(p.srcEnd)},setpts=PTS-STARTPTS,reverse,setpts=PTS-STARTPTS` +
+          `${Math.abs(v - 1) > 1e-6 ? `,setpts=PTS/${n6(v)}` : ""},${exact}[${label}]`,
+      );
+    } else {
+      const slow = (p.steps ?? []).some((st) => st.v < 0.999);
+      const interp =
+        slow && p.quality === "optical"
+          ? `minterpolate=fps=${F}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,`
+          : slow && p.quality === "blend"
+            ? `minterpolate=fps=${F}:mi_mode=blend,`
+            : "";
+      lines.push(
+        `[0:v:0]trim=start=${n6(p.srcStart)}:end=${n6(p.srcEnd)},setpts=PTS-STARTPTS,setpts='${setptsExpression(p.steps ?? [], p.srcStart)}',${interp}${exact}[${label}]`,
+      );
+    }
+  });
+  lines.push(`${labels.join("")}concat=n=${labels.length}:v=1:a=0[${outLabel}]`);
+  return lines;
+}
+
+/**
+ * Sound of a retimed / split edit: per kept range, its pieces (plain, time-stretched with the
+ * pitch kept, or muted for ramps / freezes / reverse unless audio "pitch"), then the usual short
+ * equal-power crossfade at each join (only where both sides are plain sound). Split edits move
+ * each piece's sound edges by the split amounts. Pure.
+ */
+export function pieceAudioChain(
+  plan: CutPlan,
+  sourceDuration: number,
+  o: { crossfade?: number; edgeFade?: number },
+  outLabel: string,
+  fps = 30,
+): string[] {
+  const perKeep = splitPieces(plan, fps, "audio");
+  const ranges = splitRanges(plan).audio;
+  const xf = joinCrossfades(ranges, sourceDuration, o.crossfade ?? 0.04).map((d, j) => {
+    const a = perKeep[j].at(-1);
+    const b = perKeep[j + 1]?.[0];
+    return a?.kind === "normal" && b?.kind === "normal" ? d : 0;
+  });
+  const edge = o.edgeFade ?? 0.01;
+  const n = perKeep.length;
+  const lines: string[] = [];
+  let seq = 0;
+  perKeep.forEach((pieces, i) => {
+    const labels: string[] = [];
+    pieces.forEach((p, k) => {
+      const label = `ap${seq++}`;
+      labels.push(`[${label}]`);
+      const len = pieceLen(p);
+      let s = p.srcStart;
+      let e = p.srcEnd;
+      if (p.kind === "normal") {
+        if (k === 0 && i > 0) s -= xf[i - 1] / 2;
+        if (k === pieces.length - 1 && i < n - 1) e += xf[i] / 2;
+        lines.push(`[0:a:0]atrim=start=${n6(s)}:end=${n6(e)},asetpts=PTS-STARTPTS[${label}]`);
+        return;
+      }
+      const exact = `apad,atrim=duration=${n6(len)},asetpts=PTS-STARTPTS`;
+      if (p.kind === "freeze" || p.audio !== "pitch") {
+        // Silence with the source's own format (so it can be joined to the plain pieces).
+        lines.push(`[0:a:0]atrim=start=${n6(p.srcStart)}:duration=${n6(Math.max(0.05, len))},asetpts=PTS-STARTPTS,volume=0,${exact}[${label}]`);
+        return;
+      }
+      if (p.kind === "reverse") {
+        const v = p.steps?.[0].v ?? 1;
+        lines.push(`[0:a:0]atrim=start=${n6(s)}:end=${n6(e)},asetpts=PTS-STARTPTS,areverse,${atempoChain(v)},${exact}[${label}]`);
+        return;
+      }
+      const steps = audioSteps(p.steps ?? []);
+      const sub = steps.map((st, m) => {
+        const l = `${label}s${m}`;
+        // Each stretched chunk padded/trimmed to its exact length: atempo's flush makes short runs drift.
+        lines.push(`[0:a:0]atrim=start=${n6(st.s0)}:end=${n6(st.s1)},asetpts=PTS-STARTPTS,${atempoChain(st.v)},apad,atrim=duration=${n6((st.s1 - st.s0) / st.v)},asetpts=PTS-STARTPTS[${l}]`);
+        return `[${l}]`;
+      });
+      lines.push(`${sub.join("")}concat=n=${sub.length}:v=0:a=1,${exact}[${label}]`);
+    });
+    const keepLen = pieces.reduce((acc, p) => acc + pieceLen(p), 0);
+    const fades: string[] = [];
+    const f = Math.min(edge, keepLen / 4);
+    const total = keepLen + (i > 0 ? xf[i - 1] / 2 : 0) + (i < n - 1 ? xf[i] / 2 : 0);
+    if (i === 0 && f > 0) fades.push(`afade=t=in:st=0:d=${n3(f)}`);
+    if (i === n - 1 && f > 0) fades.push(`afade=t=out:st=${n3(total - f)}:d=${n3(f)}`);
+    const out = n === 1 ? outLabel : `a${i}`;
+    const join = labels.length > 1 ? `${labels.join("")}concat=n=${labels.length}:v=0:a=1` : `${labels[0]}anull`;
+    lines.push(`${join}${fades.map((x) => `,${x}`).join("")}[${out}]`);
+  });
+  let acc = "a0";
+  for (let j = 0; j < n - 1; j++) {
+    const out = j === n - 2 ? outLabel : `ax${j + 1}`;
+    lines.push(xf[j] > 0 ? `[${acc}][a${j + 1}]acrossfade=d=${n3(xf[j])}:c1=qsin:c2=qsin[${out}]` : `[${acc}][a${j + 1}]concat=n=2:v=0:a=1[${out}]`);
+    acc = out;
+  }
+  return lines;
+}
+
 /** Assemble the full ffmpeg invocation for a cut plan plus layers. Exported for tests. */
 export function buildRenderGraph(
   plan: CutPlan,
@@ -257,11 +408,18 @@ export function buildRenderGraph(
   // 1. Trim every kept range. Video: hard cuts, concatenated. Audio: a short
   //    equal-power crossfade at each join (no level dip, no discontinuity in a music bed).
   const n = plan.keep.length;
-  if (hasV) {
-    plan.keep.forEach((k, i) => lines.push(`[0:v:0]trim=start=${n3(k.start)}:end=${n3(k.end)},setpts=PTS-STARTPTS[v${i}]`));
-    lines.push(`${plan.keep.map((_, i) => `[v${i}]`).join("")}concat=n=${n}:v=1:a=0[vcat]`);
+  const fpsIn = info.fps && info.fps > 0 && info.fps < 240 ? info.fps : 30;
+  if (hasRetiming(plan) || plan.splits?.length) {
+    // Speed ramps / freeze frames / reverse and split edits (J/L): picture and sound as pieces.
+    if (hasV) lines.push(...pieceVideoChain(plan, fpsIn, "vcat"));
+    if (hasA) lines.push(...pieceAudioChain(plan, info.duration, { crossfade: opts.crossfade, edgeFade: fade }, "acat", fpsIn));
+  } else {
+    if (hasV) {
+      plan.keep.forEach((k, i) => lines.push(`[0:v:0]trim=start=${n3(k.start)}:end=${n3(k.end)},setpts=PTS-STARTPTS[v${i}]`));
+      lines.push(`${plan.keep.map((_, i) => `[v${i}]`).join("")}concat=n=${n}:v=1:a=0[vcat]`);
+    }
+    if (hasA) lines.push(...audioJoinChain(plan.keep, info.duration, { crossfade: opts.crossfade, edgeFade: fade }, "acat"));
   }
-  if (hasA) lines.push(...audioJoinChain(plan.keep, info.duration, { crossfade: opts.crossfade, edgeFade: fade }, "acat"));
 
   let vLabel = hasV ? "vcat" : "";
   let aLabel = hasA ? "acat" : "";
@@ -372,6 +530,7 @@ export function buildRenderGraph(
         "aformat=sample_rates=48000:channel_layouts=stereo",
         `volume=${a.gainDb ?? 0}dB`,
       ];
+      if (a.fadeIn && a.fadeIn > 0) chain.push(`afade=t=in:st=0:d=${n3(Math.min(a.fadeIn, span))}`);
       if (a.fadeOut && a.fadeOut > 0) chain.push(`afade=t=out:st=${n3(Math.max(0, span - a.fadeOut))}:d=${n3(a.fadeOut)}`);
       if (a.at > 0) chain.push(`adelay=${Math.round(a.at * 1000)}:all=1`);
       lines.push(`[${idx}:a:0]${chain.join(",")}[mx${k}]`);
@@ -677,4 +836,98 @@ export async function hasAlpha(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------- montage (cut to music)
+
+export interface MontageRenderOptions {
+  width?: number;
+  height?: number;
+  /** Mix each shot's own sound under the music at this gain (dB). Default: no natural sound. */
+  natSoundDb?: number;
+  /** Music gain (dB), default 0 (loudness normalisation follows). */
+  musicGainDb?: number;
+  loudnorm?: boolean;
+  quality?: RenderQuality;
+  crf?: number;
+  preset?: string;
+}
+
+/**
+ * Render a montage (multi-source shots cut to a fitted song) in one ffmpeg pass. Every shot is
+ * cut to an exact frame count so the picture cuts land on the frame nearest each beat with no
+ * drift; the song is rebuilt from its fitted segments (bar-line edits with short crossfades).
+ */
+export async function renderMontage(m: Montage, output: string, opts: MontageRenderOptions = {}): Promise<RenderResult> {
+  const t0 = Date.now();
+  if (!m.shots.length) throw new Error("Montage has no shots");
+  const out = resolve(output);
+  const first = await probe(m.shots[0].path);
+  let W = even(opts.width ?? first.width ?? 1920);
+  let H = even(opts.height ?? first.height ?? 1080);
+  if (!opts.width && !opts.height && W * H > 1920 * 1080) {
+    const k = Math.sqrt((1920 * 1080) / (W * H));
+    W = even(W * k);
+    H = even(H * k);
+  }
+  const F = m.fps;
+  const probes = new Map<string, MediaInfo>();
+  for (const s of m.shots) if (!probes.has(s.path)) probes.set(s.path, await probe(s.path));
+  const build = (withVideo: boolean, stats?: LoudnormStats) => {
+    const inputs: GraphInput[] = [];
+    const lines: string[] = [];
+    const labels: string[] = [];
+    const nat: string[] = [];
+    m.shots.forEach((s, k) => {
+      const kind = mediaKind(s.path);
+      inputs.push({ args: kind === "image" ? ["-loop", "1", "-t", n3(s.duration + 0.5), "-i", resolve(s.path)] : ["-ss", n3(s.in), "-t", n3(s.duration + 0.5), "-i", resolve(s.path)] });
+      const frames = Math.round((s.at + s.duration) * F) - Math.round(s.at * F);
+      if (withVideo) {
+        lines.push(
+          `[${k}:v:0]setpts=PTS-STARTPTS,fps=${n3(F)},scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,format=yuv420p,` +
+            `tpad=stop_mode=clone:stop_duration=${n3(s.duration + 1)},trim=end_frame=${Math.max(1, frames)},setpts=PTS-STARTPTS[s${k}]`,
+        );
+        labels.push(`[s${k}]`);
+      }
+      if (opts.natSoundDb !== undefined && probes.get(s.path)?.hasAudio) {
+        lines.push(
+          `[${k}:a:0]atrim=duration=${n3(s.duration)},asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo,volume=${opts.natSoundDb}dB,` +
+            `afade=t=in:d=0.02,afade=t=out:st=${n3(Math.max(0, s.duration - 0.04))}:d=0.04,adelay=${Math.round(s.at * 1000)}:all=1[n${k}]`,
+        );
+        nat.push(`[n${k}]`);
+      }
+    });
+    if (withVideo) lines.push(`${labels.join("")}concat=n=${labels.length}:v=1:a=0[vout]`);
+    const mi = inputs.length;
+    inputs.push({ args: ["-i", resolve(m.music.source)] });
+    lines.push(fitFilter(m.music, `${mi}:a:0`, "music0"));
+    lines.push(`[music0]volume=${opts.musicGainDb ?? 0}dB[music]`);
+    let a = "music";
+    if (nat.length) {
+      lines.push(`[music]${nat.join("")}amix=inputs=${nat.length + 1}:duration=first:normalize=0[mixed]`);
+      a = "mixed";
+    }
+    const post = opts.loudnorm ? `${loudnormFilter(stats)},aresample=48000` : "aresample=48000";
+    lines.push(`[${a}]${post},atrim=duration=${n3(m.duration)}[aout]`);
+    return { inputs, graph: lines.join(";\n") };
+  };
+  let loudness: RenderResult["loudness"];
+  let stats: LoudnormStats | undefined;
+  if (opts.loudnorm && opts.quality !== "draft") {
+    const { inputs, graph } = build(false);
+    const g = graph.replace(/\[aout\]$/, ",loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json[aout]");
+    try {
+      const { stderr } = await runGraph(inputs, g, ["-map", "[aout]"], "-", ["-f", "null"], 10 * 60_000, "info");
+      stats = parseLoudnormJson(stderr) ?? undefined;
+      if (stats) loudness = { measuredI: Number(stats.input_i), measuredTP: Number(stats.input_tp) };
+    } catch {
+      stats = undefined;
+    }
+  }
+  const { inputs, graph } = build(true, stats);
+  const hw = opts.quality === "draft" ? { videotoolbox: (await ffmpegEncoders()).has("h264_videotoolbox") } : {};
+  const encode = encodeArgs(true, true, opts, hw);
+  await runGraph(inputs, graph, ["-map", "[vout]", "-map", "[aout]"], out, [...encode, "-r", n3(F)], Math.max(10 * 60_000, m.duration * 20_000));
+  const encoder = encode[encode.indexOf("-c:v") + 1];
+  return { output: out, duration: m.duration, width: W, height: H, loudness, encoder, seconds: (Date.now() - t0) / 1000 };
 }

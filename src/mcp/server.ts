@@ -25,6 +25,9 @@ import { autoStartStudio, studioUrl } from "../studio/index.js";
 import { instrumentServer } from "../studio/instrument.js";
 import { registerStudioTools } from "../studio/tools.js";
 import { MEDIA_INSTRUCTIONS, registerMediaTools } from "../media/tools.js";
+import { registerRhythmTools, timelineMusic } from "./rhythm-tools.js";
+import { registerShotTools } from "../engine/analysis/tools.js";
+import { GRAPHICS_INSTRUCTIONS, registerGraphicsTools } from "../graphics/tools.js";
 import { cutPlanView, registerUi, renderView, statusView, transcriptView, uiMeta } from "../ui/index.js";
 
 export const VERSION = "0.1.0";
@@ -108,7 +111,7 @@ Standard workflow:
 All times are seconds. Times for markers, zooms, captions and placements are on the EDITED timeline (after cuts).`;
 
 export function createServer(): McpServer {
-  const server = new McpServer({ name: "openedit", version: VERSION }, { instructions: `${WORKFLOW}\n\n${MEDIA_INSTRUCTIONS}` });
+  const server = new McpServer({ name: "openedit", version: VERSION }, { instructions: `${WORKFLOW}\n\n${MEDIA_INSTRUCTIONS}\n\n${GRAPHICS_INSTRUCTIONS}` });
   // OpenEdit Studio: report every tool call (including ones registered later) to the live view.
   instrumentServer(server);
 
@@ -635,6 +638,7 @@ export function createServer(): McpServer {
         transcript,
         zooms: same ? proj.zooms : undefined,
         captions: same ? proj.captions : undefined,
+        music: same ? await timelineMusic(proj.placements) : undefined,
       });
       const content: ToolResult["content"] = [];
       if (r.sheet) content.push({ type: "image", data: r.sheet.toString("base64"), mimeType: "image/jpeg" });
@@ -971,6 +975,10 @@ export function createServer(): McpServer {
 
   registerStudioTools(server);
   registerMediaTools(server);
+  registerRhythmTools(server);
+  registerGraphicsTools(server);
+  // Shots & scenes: analyze_footage, suggest_broll, find_match_cuts, multicam_sync, multicam_edit.
+  registerShotTools(server);
   // MCP Apps: inline views for hosts that render them (text content is unchanged for others).
   registerUi(server);
 

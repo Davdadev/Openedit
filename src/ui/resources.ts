@@ -15,7 +15,7 @@ import { RESOURCE_MIME_TYPE, RESOURCE_URI_META_KEY, registerAppResource } from "
 
 export { RESOURCE_MIME_TYPE };
 
-export const UI_VIEWS = ["cut-plan", "transcript", "media", "render", "status"] as const;
+export const UI_VIEWS = ["cut-plan", "transcript", "media", "render", "status", "graphics"] as const;
 export type UiView = (typeof UI_VIEWS)[number];
 
 export const VIEW_TITLES: Record<UiView, string> = {
@@ -24,6 +24,7 @@ export const VIEW_TITLES: Record<UiView, string> = {
   media: "OpenEdit stock media",
   render: "OpenEdit render",
   status: "OpenEdit editor status",
+  graphics: "OpenEdit motion graphics",
 };
 
 /** Which tools render with which view. */
@@ -41,6 +42,11 @@ export const TOOL_VIEWS: Record<string, UiView> = {
   render_caption_overlay: "render",
   editor_status: "status",
   select_host: "status",
+  graphics_catalog: "graphics",
+  preview_template: "graphics",
+  create_motion_template: "graphics",
+  place_graphic: "graphics",
+  import_template_pack: "graphics",
 };
 
 export const uiUri = (view: UiView) => `ui://openedit/${view}.html`;

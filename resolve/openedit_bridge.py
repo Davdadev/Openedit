@@ -124,6 +124,15 @@ def sec_to_frame(seconds, fps):
     return int(math.floor(float(seconds) * fps + 0.5 + 1e-9))
 
 
+def frames_to_timecode(frame, fps):
+    """Absolute frame number -> non-drop "HH:MM:SS:FF" at the nominal (rounded) rate."""
+    base = max(1, int(round(float(fps))))
+    frame = max(0, int(frame))
+    ff = frame % base
+    total = frame // base
+    return "%02d:%02d:%02d:%02d" % (total // 3600, (total // 60) % 60, total % 60, ff)
+
+
 def frame_to_sec(frame, fps):
     return round(float(frame) / fps, 6)
 
@@ -820,6 +829,39 @@ class ResolveBridge(object):
                     break
         return added
 
+    def cmd_importTimeline(self, args):
+        """Build a NEW timeline from an interchange file (FCP7 XML / FCPXML / EDL) the server
+        wrote, e.g. a multicam switch: MediaPool.ImportTimelineFromFile. Never touches existing
+        timelines."""
+        xml_path = args.get("xmlPath")
+        if not xml_path or not os.path.isfile(xml_path):
+            raise BridgeError("importTimeline needs xmlPath of an existing file")
+        project = self.project()
+        media_pool = project.GetMediaPool()
+        if not _has(media_pool, "ImportTimelineFromFile"):
+            raise BridgeError("unsupported: this Resolve has no MediaPool.ImportTimelineFromFile")
+        name = args.get("name") or os.path.splitext(os.path.basename(xml_path))[0]
+        tl = None
+        for options in ({"timelineName": name, "importSourceClips": True}, {"timelineName": name}, {}):
+            try:
+                tl = media_pool.ImportTimelineFromFile(xml_path, options)
+            except Exception as exc:  # noqa: BLE001
+                log("ImportTimelineFromFile failed:", exc)
+                tl = None
+            if tl:
+                break
+        if not tl:
+            raise BridgeError("Resolve could not import %s (File > Import > Timeline... by hand shows why)" % os.path.basename(xml_path))
+        try:
+            project.SetCurrentTimeline(tl)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            actual = tl.GetName()
+        except Exception:  # noqa: BLE001
+            actual = name
+        return {"sequence": actual, "file": xml_path}
+
     def cmd_importMedia(self, args):
         paths = [p for p in (args.get("paths") or []) if p]
         missing = [p for p in paths if not os.path.exists(p)]
@@ -1023,6 +1065,82 @@ class ResolveBridge(object):
                 raise BridgeError("render finished but no output found at %s" % output)
         return {"output": actual}
 
+    # ---- graphics -----------------------------------------------------------
+
+    def cmd_addFusionTitle(self, args):
+        """Insert an editable Fusion Text+ title at `at` seconds and set its inputs.
+
+        args: {at, track?, duration?, spec: {inputs: {id: value}, keys: {id: [[frame, value], ...]}},
+               settingPath?, name?}
+        Uses Timeline.InsertFusionTitleIntoTimeline("Text+") at the playhead, then the
+        title's Fusion comp (TimelineItem.GetFusionCompByIndex(1)) to set Text+ inputs
+        (SetInput) and keyframes (AddModifier BezierSpline + SetInput at frames).
+        """
+        spec = args.get("spec") or {}
+        project = self.project()
+        tl = self.timeline(project)
+        fps = self.timeline_fps(tl, project)
+        at = float(args.get("at") or 0)
+        frame = tl.GetStartFrame() + sec_to_frame(at, fps)
+        if not _has(tl, "InsertFusionTitleIntoTimeline"):
+            raise BridgeError("unsupported: this Resolve version cannot insert Fusion titles from scripts "
+                              "(import the .setting file manually: Fusion page > paste, or Effects > Titles)")
+        tc = frames_to_timecode(frame, fps)
+        if _has(tl, "SetCurrentTimecode"):
+            tl.SetCurrentTimecode(tc)
+        item = tl.InsertFusionTitleIntoTimeline(args.get("name") or "Text+")
+        if not item:
+            raise BridgeError("Resolve did not insert the Fusion title (is the Edit page open and the playhead inside the timeline?)")
+        notes = []
+        track = args.get("track")
+        if track and _has(item, "SetPosition"):
+            want = int(track)
+            while (tl.GetTrackCount("video") or 0) < want:
+                if not tl.AddTrack("video"):
+                    break
+            if not item.SetPosition({"trackIndex": want, "startFrame": frame}):
+                notes.append("could not move the title to V%d" % want)
+        comp = item.GetFusionCompByIndex(1) if _has(item, "GetFusionCompByIndex") else None
+        if comp is None:
+            raise BridgeError("inserted a Fusion title but could not open its composition")
+        tool = comp.FindTool("Template") if _has(comp, "FindTool") else None
+        if tool is None and _has(comp, "GetToolList"):
+            tools = comp.GetToolList(False, "TextPlus") or {}
+            tool = next(iter(tools.values()), None) if isinstance(tools, dict) else (tools[0] if tools else None)
+        if tool is None:
+            raise BridgeError("the Fusion title has no Text+ tool")
+        set_count = 0
+        keyed = spec.get("keys") or {}
+        for key, value in (spec.get("inputs") or {}).items():
+            if key in keyed:
+                continue
+            if isinstance(value, list):
+                value = dict((i + 1, v) for i, v in enumerate(value))
+            try:
+                tool.SetInput(key, value)
+                set_count += 1
+            except Exception as exc:  # noqa: BLE001
+                notes.append("%s: %s" % (key, exc))
+        for key, keys in keyed.items():
+            try:
+                tool.AddModifier(key, "BezierSpline")
+                for fr, value in keys:
+                    tool.SetInput(key, value, int(fr))
+                set_count += 1
+            except Exception as exc:  # noqa: BLE001
+                notes.append("%s keys: %s" % (key, exc))
+        duration = None
+        if _has(item, "GetDuration"):
+            try:
+                duration = float(item.GetDuration()) / fps
+            except Exception:  # noqa: BLE001
+                duration = None
+        want_dur = args.get("duration")
+        if want_dur and duration and abs(float(want_dur) - duration) > 1.0 / fps:
+            notes.append("title length is %.2fs (Resolve's default); trim it to %.2fs on the timeline" % (duration, float(want_dur)))
+        return {"inserted": True, "at": at, "timecode": tc, "inputs": set_count, "duration": duration,
+                "notes": notes, "settingPath": args.get("settingPath")}
+
 
 def _parse_srt(path):
     cues = []
@@ -1064,6 +1182,8 @@ COMMANDS = {
     "addCaptions": ResolveBridge.cmd_addCaptions,
     "addZooms": ResolveBridge.cmd_addZooms,
     "render": ResolveBridge.cmd_render,
+    "addFusionTitle": ResolveBridge.cmd_addFusionTitle,
+    "importTimeline": ResolveBridge.cmd_importTimeline,
 }
 
 

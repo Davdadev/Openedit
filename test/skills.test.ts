@@ -60,10 +60,13 @@ describe("skills", () => {
     expect(skills.sort()).toEqual(
       [
         "openedit-editing",
+        "openedit-motion-design",
         "openedit-premiere-computer-use",
         "openedit-resolve-computer-use",
         "openedit-review",
+        "openedit-rhythm",
         "openedit-shorts",
+        "openedit-shots",
         "openedit-stock-media",
       ].sort(),
     );

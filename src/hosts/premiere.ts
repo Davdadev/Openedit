@@ -127,4 +127,17 @@ export class PremiereHost implements EditorHost {
   render(opts: { output: string; preset?: string }): Promise<{ output: string }> {
     return this.rpc("render", opts);
   }
+  /**
+   * Place a Motion Graphics template (.mogrt) with sequence.importMGT and set its
+   * Essential Graphics params (see docs/PROTOCOL.md, applyMogrt).
+   */
+  applyMogrt(args: {
+    path: string;
+    at: number;
+    duration?: number;
+    track?: number;
+    params?: { name: string; type: string; value: unknown }[];
+  }): Promise<{ placed: boolean; track: number; at: number; set: number; missing: string[]; errors: string[]; name?: string; duration?: number }> {
+    return this.rpc("applyMogrt", args);
+  }
 }

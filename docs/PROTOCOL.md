@@ -45,6 +45,9 @@ All times are seconds (float). Types are in `src/hosts/types.ts`.
 | `addCaptions`    | `{ cues: CaptionCue[], srtPath: string }`    | `{ added, file }` — SRT already written by the server; host imports it as captions/subtitles track |
 | `addZooms`       | `{ zooms: Zoom[] }`                          | number applied (scale keyframes on V1 clips over each range, quick ease in/out) |
 | `render`         | `{ output: string, preset?: string }`        | `{ output }`                             |
+| `importTimeline` | `{ xmlPath: string, name?: string }`          | `{ sequence, file }` — Resolve only: builds a NEW timeline from an interchange file (multicam switch from `multicam_edit`) with `MediaPool.ImportTimelineFromFile`. |
+| `applyMogrt`     | `{ path, at, duration?, track?, params?: {name, type, value}[] }` | Premiere only. `{ placed, track, at, set, missing[], errors[], duration? }` — `sequence.importMGT(path, ticks, track-1, 0)`, then each param via `getMGTComponent().properties.getParamForDisplayName(name)`: text (AE text JSON `textEditValue` kept with its font info), color `[r,g,b,a]` 0..255 via `setColorValue(a,r,g,b,true)`, point `[x,y]` frame fractions, slider/angle/number, checkbox, dropdown index. `duration` trims the clip end. |
+| `addFusionTitle` | `{ at, track?, duration?, spec: {inputs, keys}, settingPath?, name? }` | Resolve only. Moves the playhead (`SetCurrentTimecode`), `Timeline.InsertFusionTitleIntoTimeline("Text+")`, `SetPosition({trackIndex, startFrame})`, then sets the Text+ tool's inputs (`SetInput`) and keyframes (`AddModifier(id, "BezierSpline")` + `SetInput(id, v, frame)`). Returns `{ inserted, timecode, inputs, duration, notes[] }`. The same title is written as a Fusion `.setting` macro (`settingPath`) for manual reuse. |
 
 Unsupported commands return `ok:false` with error starting `unsupported:`.
 
@@ -53,3 +56,13 @@ Unsupported commands return `ok:false` with error starting `unsupported:`.
 `export_timeline {planId, format}` writes the edit as FCP7 XML (`xmeml` v5), FCPXML 1.10, CMX 3600 EDL
 or SRT (`src/engine/interchange.ts`). Edit points are snapped to source frames, NTSC rates use the
 ntsc flag / rational frame durations / drop-frame timecode, and audio is linked to video.
+
+## Split edits and retiming in `applyCutPlan`
+
+A `CutPlan` may carry `splits` (J/L cuts: `{index, type: "J"|"L", seconds, roll?}`), `ramps`
+(speed changes on source ranges) and `freezes` (`{at, duration}`); see `src/hosts/types.ts`. They are
+additive: bridges that ignore them build straight cuts at full speed (the current Premiere and
+Resolve bridges do). Fallback: `export_timeline` writes them for the NLE to import: FCP7 XML has
+linked clips with different audio/video in/out and a "Time Remap" speed effect per constant-speed
+step; FCPXML uses `audioStart`/`audioDuration`, `srcEnable="video"` for muted ramps and a `timeMap`;
+CMX 3600 EDL carries speed as M2 lines but no split edits. The standalone host renders all of them.

@@ -60,6 +60,83 @@ export interface CutPlan {
   duration: number;
   keep: TimeRange[];
   cuts: Cut[];
+  /** Optional split edits (J / L cuts) at joins between kept ranges. Hosts that ignore it get straight cuts. */
+  splits?: SplitEdit[];
+  /** Optional speed ramps / reverse on SOURCE ranges inside kept ranges. */
+  ramps?: SpeedRamp[];
+  /** Optional freeze frames (source time, held for `duration` edited seconds). */
+  freezes?: FreezeFrame[];
+}
+
+/**
+ * A split edit at the join between keep[index] and keep[index + 1].
+ *  - "J": the incoming clip's audio starts `seconds` BEFORE its picture.
+ *  - "L": the outgoing clip's audio continues `seconds` AFTER the picture cut.
+ * `roll` says which edit point moves: "audio" (default; the picture cut stays where it is and the
+ * audio uses source handles beyond the kept range) or "video" (the audio cut stays, the picture
+ * cut moves). Both keep audio and picture in sync; total duration is unchanged.
+ */
+export interface SplitEdit {
+  index: number;
+  type: "J" | "L";
+  seconds: number;
+  roll?: "audio" | "video";
+}
+
+/** Speed change over a SOURCE range (inside one kept range). */
+export interface SpeedRamp extends TimeRange {
+  /** Constant speed (0.25 = 4x slow motion, 2 = double speed). */
+  speed?: number;
+  /** Variable speed: speed at the start / end of the range, eased by `curve`. */
+  from?: number;
+  to?: number;
+  curve?: "linear" | "ease-in" | "ease-out" | "ease-in-out";
+  /** Play the range backwards (constant speed only). */
+  reverse?: boolean;
+  /** Slow-motion frames: "frames" (duplicate, default), "blend" (frame blending), "optical" (motion-interpolated). */
+  quality?: "frames" | "blend" | "optical";
+  /** Source audio over the ramp: "mute" (default; lay music / SFX over it) or "pitch" (time-stretched, pitch kept). */
+  audio?: "mute" | "pitch";
+}
+
+export interface FreezeFrame {
+  /** Source time of the frame to hold. */
+  at: number;
+  /** Edited seconds to hold it. */
+  duration: number;
+}
+
+/** One picture segment of a multi-source edit (multicam switch, assembled shots). */
+export interface MultiSegment {
+  /** Index into MultiTrackEdit.sources. */
+  source: number;
+  /** Source in/out (seconds in that file). */
+  srcIn: number;
+  srcOut: number;
+  /** Record in/out on the edit timeline (seconds). */
+  recIn: number;
+  recOut: number;
+  /** Why this shot (for review). */
+  note?: string;
+}
+
+/** A clip on the single audio track of a multi-source edit. */
+export interface MultiAudioClip {
+  source: number;
+  srcIn: number;
+  srcOut: number;
+  recIn: number;
+}
+
+/** Multi-source edit: one video track switching between sources over one continuous audio track. */
+export interface MultiTrackEdit {
+  name?: string;
+  sources: { path: string; name?: string; role?: string }[];
+  segments: MultiSegment[];
+  audio: MultiAudioClip[];
+  width?: number;
+  height?: number;
+  fps?: number;
 }
 
 export interface Marker {
@@ -163,7 +240,11 @@ export type BridgeCommand =
   | "placeClips"
   | "addCaptions"
   | "addZooms"
-  | "render";
+  | "render"
+  | "importTimeline"
+  // graphics: Premiere MOGRT placement, Resolve editable Fusion Text+ title
+  | "applyMogrt"
+  | "addFusionTitle";
 
 export interface BridgeRequest {
   id: string;

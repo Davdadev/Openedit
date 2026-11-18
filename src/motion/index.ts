@@ -12,7 +12,7 @@
  *   with ffmpeg/libass when HyperFrames is unavailable.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { availableParallelism, cpus, tmpdir, totalmem } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
@@ -89,6 +89,8 @@ interface ComposeOptions {
   fps: number;
   duration: number;
   opaque: boolean;
+  /** Design size of the fragment (user/Figma templates): the body is scaled to fit the output frame. */
+  stage?: { width: number; height: number };
 }
 
 const SAFE_COLOR = /^[#a-zA-Z0-9(),.%\s-]{1,64}$/;
@@ -125,7 +127,8 @@ function fill(tpl: string, map: Record<string, string>): string {
 function compose(fragment: string, params: Record<string, unknown>, o: ComposeOptions): string {
   const root = templatesDir();
   const shell = readFileSync(join(root, "_shared", "shell.html"), "utf8");
-  const runtime = readFileSync(join(root, "_shared", "runtime.js"), "utf8");
+  const motionFile = join(root, "_shared", "motion.js");
+  const runtime = readFileSync(join(root, "_shared", "runtime.js"), "utf8") + (existsSync(motionFile) ? `\n${readFileSync(motionFile, "utf8")}` : "");
 
   // {{param}} placeholders inside the fragment → HTML-escaped values.
   const textMap: Record<string, string> = {};
@@ -151,8 +154,18 @@ function compose(fragment: string, params: Record<string, unknown>, o: ComposeOp
   ]
     .map((l) => "        " + l)
     .join("\n");
-  const rem = (Math.min(o.width, o.height) / 1080) * 10;
+  const rem = (Math.min(o.stage?.width ?? o.width, o.stage?.height ?? o.height) / 1080) * 10;
   const data = { params, duration: o.duration, width: o.width, height: o.height, fps: o.fps, rem };
+  if (o.stage) {
+    // Fixed-size design (px): scale it to fit the output frame, centred (letterboxed).
+    const k = Math.min(o.width / o.stage.width, o.height / o.stage.height);
+    const x = (o.width - o.stage.width * k) / 2;
+    const y = (o.height - o.stage.height * k) / 2;
+    body =
+      `<div id="oe-stage" style="position:absolute;left:0;top:0;width:${o.stage.width}px;height:${o.stage.height}px;overflow:hidden;` +
+      `transform-origin:0 0;transform:translate(${x.toFixed(2)}px,${y.toFixed(2)}px) scale(${k.toFixed(5)})">\n${body}\n</div>`;
+    Object.assign(data, { stage: { ...o.stage, scale: k } });
+  }
 
   return fill(shell, {
     WIDTH: String(o.width),
@@ -266,13 +279,21 @@ export function defaultWorkers(): number {
 }
 
 /** Render a composed index.html with HyperFrames. */
-async function renderHtml(html: string, output: string, fps: number, opts: { workers?: number | "auto" } = {}): Promise<void> {
+/** Scratch folder for HyperFrames projects (OPENEDIT_MOTION_TMP, else the OS temp dir). */
+function workDir(): string {
+  const base = process.env.OPENEDIT_MOTION_TMP || tmpdir();
+  mkdirSync(base, { recursive: true });
+  return mkdtempSync(join(base, "openedit-motion-"));
+}
+
+async function renderHtml(html: string, output: string, fps: number, opts: { workers?: number | "auto"; assets?: string } = {}): Promise<void> {
   const format = formatFor(output);
   const out = resolve(output);
   mkdirSync(dirname(out), { recursive: true });
-  const work = mkdtempSync(join(tmpdir(), "openedit-motion-"));
+  const work = workDir();
   try {
     writeFileSync(join(work, "index.html"), html);
+    if (opts.assets && existsSync(opts.assets)) cpSync(opts.assets, join(work, "assets"), { recursive: true });
     const hf = hyperframesCommand();
     const args = [...hf.args, "render", work, "--format", format, "-o", out, "--fps", String(fps), "--quality", "looks", "--quiet"];
     args.push("--workers", String(opts.workers ?? process.env.OPENEDIT_MOTION_WORKERS ?? defaultWorkers()));
@@ -302,20 +323,25 @@ export function buildTemplateHtml(o: {
   fps?: number;
   duration?: number;
   opaque?: boolean;
+  /** Template folder outside templates/ (user / Figma templates made with create_motion_template). */
+  dir?: string;
 }): string {
   const root = templatesDir();
-  const m = readManifest(join(root, o.template));
-  if (!m || o.template.startsWith("_") || /[\\/]/.test(o.template)) {
+  const dir = o.dir ? resolve(o.dir) : join(root, o.template);
+  const m = readManifest(dir) as (TemplateManifest & { width?: number; height?: number; fps?: number; stage?: boolean }) | null;
+  if (!m || (!o.dir && (o.template.startsWith("_") || /[\\/]/.test(o.template)))) {
     throw new Error(`Unknown motion template "${o.template}". Available: ${allManifests().map((x) => x.id).join(", ")}`);
   }
-  const fragment = readFileSync(join(root, o.template, "composition.html"), "utf8");
+  const fragment = readFileSync(join(dir, "composition.html"), "utf8");
   const params = { ...(m.defaults ?? {}), ...stripUndefined(o.params ?? {}) };
+  const stage = o.dir && m.width && m.height && m.stage !== false ? { width: m.width, height: m.height } : undefined;
   return compose(fragment, params, {
-    width: even(o.width ?? 1920),
-    height: even(o.height ?? 1080),
-    fps: o.fps ?? 30,
+    width: even(o.width ?? m.width ?? 1920),
+    height: even(o.height ?? m.height ?? 1080),
+    fps: o.fps ?? m.fps ?? 30,
     duration: positive(o.duration ?? m.duration ?? 4),
     opaque: !!o.opaque,
+    stage,
   });
 }
 
@@ -339,12 +365,50 @@ export async function renderTemplate(o: {
   height?: number;
   fps?: number;
   duration?: number;
+  dir?: string;
 }): Promise<{ output: string }> {
   const format = formatFor(o.output);
   const fps = o.fps ?? 30;
   const html = buildTemplateHtml({ ...o, fps, opaque: format === "mp4" });
-  await renderHtml(html, o.output, fps);
+  await renderHtml(html, o.output, fps, { assets: o.dir ? join(o.dir, "assets") : undefined });
   return { output: resolve(o.output) };
+}
+
+/**
+ * Still frames of a template (PNG paths), via `hyperframes snapshot` — much faster than a
+ * full render. `background` makes the frame opaque (previews over a neutral backdrop).
+ */
+export async function snapshotTemplate(o: {
+  template: string;
+  dir?: string;
+  params?: Record<string, unknown>;
+  times: number[];
+  outDir: string;
+  width?: number;
+  height?: number;
+  duration?: number;
+  background?: string;
+}): Promise<string[]> {
+  const params = { ...(o.params ?? {}), ...(o.background ? { background: o.background } : {}) };
+  const html = buildTemplateHtml({ template: o.template, dir: o.dir, params, width: o.width, height: o.height, duration: o.duration, opaque: !!o.background });
+  const work = workDir();
+  try {
+    writeFileSync(join(work, "index.html"), html);
+    if (o.dir && existsSync(join(o.dir, "assets"))) cpSync(join(o.dir, "assets"), join(work, "assets"), { recursive: true });
+    mkdirSync(o.outDir, { recursive: true });
+    const hf = hyperframesCommand();
+    const at = o.times.map((t) => Math.max(0, t).toFixed(3)).join(",");
+    const env: NodeJS.ProcessEnv = { ...process.env, HYPERFRAMES_NO_TELEMETRY: "1", HYPERFRAMES_NO_UPDATE_CHECK: "1", DO_NOT_TRACK: "1", CI: process.env.CI ?? "1" };
+    const r = await run(hf.cmd, [...hf.args, "snapshot", work, "--at", at, "--no-end", "-o", o.outDir, "--json"], { cwd: work, env, timeoutMs: 5 * 60_000 });
+    const files = readdirSync(o.outDir)
+      .filter((f) => /^frame-\d+.*\.png$/.test(f))
+      .sort()
+      .map((f) => join(o.outDir, f));
+    if (r.code !== 0 || !files.length) throw new Error(`HyperFrames snapshot failed (exit ${r.code}).\n${r.out.slice(-3000)}`);
+    return files;
+  } finally {
+    if (!process.env.OPENEDIT_MOTION_KEEP) rmSync(work, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------

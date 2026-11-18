@@ -80,6 +80,7 @@ because the MCP server uses it too.
 | `host/oe-cut.jsx` | `applyCutPlan` |
 | `host/oe-edit.jsx` | `addMarkers`, `importMedia`, `placeClips`, `addCaptions`, `addZooms` |
 | `host/oe-render.jsx` | `render` |
+| `host/oe-graphics.jsx` | `applyMogrt`: places a `.mogrt` with `sequence.importMGT` and sets its Essential Graphics controls (text, colour, point, slider, checkbox, dropdown) by display name. |
 | `.debug` | Enables Chrome remote debugging of the panel at `http://localhost:8099`. |
 
 ### Server
