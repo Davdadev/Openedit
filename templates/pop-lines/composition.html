@@ -1,0 +1,51 @@
+<style>
+  .pl { position: absolute; inset: 0; display: flex; padding: 7% 7.5%; }
+  .pl.center { align-items: center; justify-content: center; }
+  .pl.top-left { align-items: flex-start; justify-content: flex-start; }
+  .pl.top { align-items: flex-start; justify-content: center; }
+  .pl.top-right { align-items: flex-start; justify-content: flex-end; }
+  .pl.left { align-items: center; justify-content: flex-start; }
+  .pl.right { align-items: center; justify-content: flex-end; }
+  .pl.bottom-left { align-items: flex-end; justify-content: flex-start; }
+  .pl.bottom { align-items: flex-end; justify-content: center; }
+  .pl.bottom-right { align-items: flex-end; justify-content: flex-end; }
+  .pl-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 0; filter: drop-shadow(0 1.4rem 2.6rem rgba(0, 0, 0, 0.28)); }
+  .pl.center .pl-stack, .pl.top .pl-stack, .pl.bottom .pl-stack { align-items: center; }
+  .pl.right .pl-stack, .pl.top-right .pl-stack, .pl.bottom-right .pl-stack { align-items: flex-end; }
+  .pl-line { position: relative; display: inline-block; padding: 0.9rem 2.4rem 1.3rem; margin: -0.35rem 0; }
+  .pl-line:nth-child(2) { margin-left: 4.5rem; }
+  .pl-line:nth-child(3) { margin-left: 1.5rem; }
+  .pl.center .pl-line, .pl.top .pl-line, .pl.bottom .pl-line { margin-left: 0; }
+  .pl-box { position: absolute; inset: 0; transform-origin: left center; }
+  .pl-text { position: relative; display: block; overflow: hidden; font: 400 11rem/1.02 var(--font), "Archivo Black", Inter, sans-serif; letter-spacing: -0.03em; color: var(--ink); white-space: nowrap; }
+  .pl-text span { display: inline-block; }
+</style>
+<div class="pl {{position}}" id="pl"><div class="pl-stack" id="pl-stack"></div></div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var lines = String(P.text || "").split("|").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 3);
+    var colors = ["var(--accent)", "var(--accent2)", "var(--accent3)"];
+    var stack = OE.$("#pl-stack");
+    stack.style.transform = "rotate(" + (Number(P.tilt) || 0) + "deg) scale(" + (Number(P.scale) || 1) + ")";
+    stack.innerHTML = lines.map(function (l, i) {
+      return '<div class="pl-line"><i class="pl-box" style="background:' + colors[i % 3] + '"></i><span class="pl-text"><span>' + OE.esc(l) + "</span></span></div>";
+    }).join("");
+    var items = Array.prototype.map.call(stack.querySelectorAll(".pl-line"), function (el) {
+      return { box: el.querySelector(".pl-box"), text: el.querySelector(".pl-text span") };
+    });
+    var outS = Math.max(1.4, D - 0.6);
+    OE.run(function (t) {
+      items.forEach(function (it, i) {
+        var d = i * 0.12;
+        var b = OE.tw(t, 0.05 + d, 0.55, E.outExpo);
+        var bo = OE.tw(t, outS + d * 0.6, 0.42, E.inQuart);
+        it.box.style.transformOrigin = bo > 0 ? "right center" : "left center";
+        it.box.style.transform = "scaleX(" + (bo > 0 ? 1 - bo : b).toFixed(4) + ")";
+        var k = OE.tw(t, 0.22 + d, 0.6, E.outExpo);
+        var o = OE.tw(t, outS - 0.05 + d * 0.6, 0.3, E.inCubic);
+        it.text.style.transform = "translateY(" + ((1 - k) * 105 + o * -105).toFixed(2) + "%)";
+      });
+    });
+  })();
+</script>

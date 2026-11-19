@@ -1,0 +1,25 @@
+{
+  "id": "kinetic-stack",
+  "description": "Kinetic stacked type: condensed uppercase words stacked one per line slam in from alternating sides with motion blur, an accent bar grows beside them, one highlighted word in the accent colour; words drop out on exit. Hooks, hype moments, statements. Transparent.",
+  "duration": 3,
+  "params": {
+    "text": "Words, one per line (| to group several words on a line), e.g. 'MOTION|BRINGS|STORIES.'",
+    "highlight": "Comma-separated words painted in the accent colour",
+    "position": "center | left | right | bottom-left | top-left ... (default left)",
+    "scale": "Size multiplier (default 1)",
+    "accent": "Accent bar / highlight colour, default #00E0FF",
+    "color": "Text colour, default #FFFFFF",
+    "font": "Font family, default League Gothic",
+    "background": "Solid background used only for opaque .mp4 output"
+  },
+  "defaults": {
+    "text": "MOTION|BRINGS|STORIES.",
+    "highlight": "",
+    "position": "left",
+    "scale": 1,
+    "accent": "#00E0FF",
+    "color": "#FFFFFF",
+    "font": "League Gothic",
+    "background": "#1B1B1F"
+  }
+}

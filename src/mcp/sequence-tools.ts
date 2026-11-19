@@ -49,7 +49,10 @@ const shotSchema = z.object({
 async function loadFootage(footage: string | string[] | undefined): Promise<FootageAnalysis[]> {
   if (!footage) return [];
   const files = Array.isArray(footage) ? footage.map(resolveMediaPath) : collectVideos({ folder: resolveMediaPath(footage) });
-  return analyzeMany(files, { noVision: false });
+  const res = await analyzeMany(files, { noVision: false });
+  const { addInsights } = await import("../engine/analysis/insight.js");
+  await addInsights(res).catch(() => undefined);
+  return res;
 }
 
 /** Analysis shots overlapping a source window of a file. */

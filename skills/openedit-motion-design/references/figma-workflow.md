@@ -47,9 +47,31 @@ Add a `motion` array, layer by layer, in reading order. Example lower third:
 ]
 ```
 
-If the frame has prototype/Smart Animate motion (`get_motion_context`), copy its durations and
-`cubic-bezier` curves into `duration`/`easing`. Exits are mirrored automatically
-(`autoExit`); set `exit: true` entries only for custom exits.
+Exits are mirrored automatically (`autoExit`); set `exit: true` entries only for custom exits.
+
+### When the designer animated it in Figma (use their motion, not presets)
+
+If the frame has keyframe animation in Figma (motion / Smart Animate), use the designer's own
+timing and easing:
+
+1. `get_motion_context {fileKey, nodeId, recursive: true}` on the PARENT frame, once.
+2. Pass the whole response, untouched, as `figmaMotion` to `create_motion_template` (with the
+   same frame's `figmaCode`). OpenEdit extracts the CSS `@keyframes` and animation rules,
+   makes loops finite (enough cycles to cover `duration`) and adds `both` fill so HyperFrames
+   can seek every frame. The tool's warnings list each keyframe set it found.
+3. If the motion CSS targets selectors that are not in the imported HTML (Figma class names
+   vs `data-name` layers), map them with `figmaSelectorMap`, e.g.
+   `{".title-frame": "[data-name=\"title\"]"}`. A warning names any `@keyframes` that no rule
+   applies.
+4. Set `autoExit: false` when the Figma motion already animates out; otherwise OpenEdit fades
+   the graphic out at the end.
+5. Look at the strip: the settled frame must match `get_screenshot`, the motion must match
+   the Figma prototype. Tracks that do not translate (shaders, video fills): export them from
+   Figma (`get_screenshot` / the person's MP4) and place them as assets.
+
+For deeper Figma work inside HyperFrames itself (storyboards as keyframes, tokens over REST,
+motion verification against Figma's own export), the HyperFrames plugin's `hyperframes:figma`
+skill covers it; OpenEdit's path above is the quick one for titles and lower thirds.
 
 ## 5. Check and iterate
 

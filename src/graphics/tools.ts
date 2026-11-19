@@ -263,7 +263,7 @@ export function registerGraphicsTools(server: McpServer): void {
     {
       description:
         "Create a reusable, editable motion-graphics template from a design — usually a Figma frame: pass figmaCode = the React+Tailwind code from Figma's get_design_context (converted to HTML+inline CSS; layers named #title / #color:accent / #image:logo become fields, Figma variables var(--x,#hex) become colour fields), " +
-        "or html/svg/css you write. Add `motion` = presets per layer (selectors like [data-name=\"plate\"] from Figma layer names): " +
+        "or html/svg/css you write. For the designer's own animation, pass figmaMotion = Figma's get_motion_context output (CSS @keyframes made finite and seekable). Or add `motion` = presets per layer (selectors like [data-name=\"plate\"] from Figma layer names): " +
         "entrances mask-up, rise, wipe-right, grow-x, tracking-in, line-draw, count-up, type… with professional easing; exits are mirrored automatically (faster, ease-in). " +
         "Validated and sanitised (no scripts, no remote assets: pass local files in assets; Google Fonts are downloaded into the template). Renders a preview strip (LOOK at it and iterate) and registers the template in graphics_catalog for place_graphic in any host.\n\n" +
         presetDocs(),
@@ -271,6 +271,8 @@ export function registerGraphicsTools(server: McpServer): void {
         name: z.string(),
         id: z.string().optional(),
         figmaCode: z.string().optional().describe("Raw get_design_context output (React + Tailwind)"),
+        figmaMotion: z.union([z.string(), z.record(z.unknown()), z.array(z.unknown())]).optional().describe("Raw get_motion_context output (Figma MCP, recursive:true on the frame): its CSS @keyframes are extracted, made finite and seekable, and applied — the designer's own timing and easing instead of presets"),
+        figmaSelectorMap: z.record(z.string()).optional().describe('Rewrite selectors in the motion CSS to the imported layers, e.g. {".frame-1": "[data-name=\\"title\\"]"}'),
         html: z.string().optional(),
         svg: z.string().optional(),
         css: z.string().optional(),

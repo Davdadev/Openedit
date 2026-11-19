@@ -1,0 +1,27 @@
+{
+  "id": "stamp-badge",
+  "description": "Stamped badge: a scalloped seal slams in and settles, a ring of text turns around it, a short word or icon sits in the middle; exits with a spin. Offers, 'new', 'limited', stickers on product shots. Transparent.",
+  "duration": 3.5,
+  "params": {
+    "center": "Short centre text (1-2 words, | for a line break) or an icon",
+    "ring": "Text around the ring (repeats to fill), e.g. 'NEW FLAVOUR • LIMITED •'",
+    "position": "center | top-left | top | top-right | left | right | bottom-left | bottom | bottom-right (default top-right)",
+    "points": "Number of scallops (default 16; 0 = circle)",
+    "scale": "Size multiplier (default 1)",
+    "accent": "Badge colour, default #FF3D2E",
+    "ink": "Text colour, default #FFF6E8",
+    "font": "Font family, default Archivo Black",
+    "background": "Solid background used only for opaque .mp4 output"
+  },
+  "defaults": {
+    "center": "NEW",
+    "ring": "LIMITED EDITION • TASTE THE COLOUR •",
+    "position": "top-right",
+    "points": 16,
+    "scale": 1,
+    "accent": "#FF3D2E",
+    "ink": "#FFF6E8",
+    "font": "Archivo Black",
+    "background": "#1B1B1F"
+  }
+}

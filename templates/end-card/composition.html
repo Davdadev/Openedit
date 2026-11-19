@@ -1,0 +1,76 @@
+<style>
+  .ec { position: absolute; inset: 0; display: flex; justify-content: center; padding: 8%; }
+  .ec.center { align-items: center; }
+  .ec.top { align-items: flex-start; }
+  .ec.bottom { align-items: flex-end; }
+  .ec-in { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; filter: drop-shadow(0 1.6rem 3.4rem rgba(0, 0, 0, 0.35)); }
+  .ec-brand { font: 400 21rem/0.95 var(--font), "Archivo Black", Inter, sans-serif; letter-spacing: -0.045em; color: var(--fg); white-space: nowrap; }
+  .ec-brand .oe-c { transform-origin: 50% 100%; }
+  .ec-tag { position: relative; margin-top: 2.2rem; padding: 1rem 2.8rem 1.4rem; }
+  .ec-tag i { position: absolute; inset: 0; background: var(--accent); transform-origin: left center; border-radius: 0.6rem; }
+  .ec-tag span { position: relative; display: block; overflow: hidden; font: 400 5.6rem/1.05 var(--font), "Archivo Black", Inter, sans-serif; letter-spacing: -0.01em; color: var(--ink); white-space: nowrap; }
+  .ec-tag span b { display: inline-block; font-weight: inherit; }
+  .ec-cta { margin-top: 3rem; padding: 1.6rem 3.6rem; border-radius: 99rem; background: var(--accent2); font: 700 3.4rem/1 Inter, sans-serif; letter-spacing: 0.02em; color: var(--ink); }
+  .ec-sp { position: absolute; width: 5rem; height: 5rem; }
+</style>
+<div class="ec {{position}}">
+  <div class="ec-in" id="ec-in">
+    <div class="ec-brand" id="ec-brand"></div>
+    <div class="ec-tag" id="ec-tag"><i id="ec-tag-i"></i><span><b id="ec-tag-t">{{tagline}}</b></span></div>
+    <div class="ec-cta" id="ec-cta">{{cta}}</div>
+  </div>
+</div>
+<script>
+  (function () {
+    var P = OE.params, E = OE.E;
+    var B = OE.split(OE.$("#ec-brand"), P.brand, { mask: false });
+    var hasTag = !!String(P.tagline || "").trim(), hasCta = !!String(P.cta || "").trim();
+    if (!hasTag) OE.$("#ec-tag").style.display = "none";
+    if (!hasCta) OE.$("#ec-cta").style.display = "none";
+    var root = OE.$("#ec-in");
+    root.style.transform = "scale(" + (Number(P.scale) || 1) + ")";
+    // Sparkles: deterministic positions around the brand word.
+    var spark = [];
+    if (!(P.sparkles === false || P.sparkles === "false")) {
+      var R = OE.rng(7);
+      var spots = [[-6, 8], [104, 2], [96, 70], [-2, 62]];
+      spots.forEach(function (s, i) {
+        var el = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        el.setAttribute("viewBox", "-10 -10 20 20");
+        el.setAttribute("class", "ec-sp");
+        el.innerHTML = '<path d="M0,-10 C1,-2 2,-1 10,0 C2,1 1,2 0,10 C-1,2 -2,1 -10,0 C-2,-1 -1,-2 0,-10Z" fill="var(--accent3)"/>';
+        el.style.left = s[0] + "%";
+        el.style.top = s[1] + "%";
+        var size = 3 + R() * 3;
+        el.style.width = el.style.height = size + "rem";
+        OE.$("#ec-brand").appendChild(el);
+        spark.push({ el: el, at: 0.55 + i * 0.12 + R() * 0.1 });
+      });
+      OE.$("#ec-brand").style.position = "relative";
+    }
+    var tagI = OE.$("#ec-tag-i"), tagT = OE.$("#ec-tag-t"), cta = OE.$("#ec-cta");
+    var n = B.chars.length, st = Math.min(0.05, 0.5 / Math.max(1, n));
+    OE.run(function (t) {
+      B.chars.forEach(function (c, i) {
+        var k = OE.tw(t, 0.02 + i * st, 0.6, E.outBack);
+        var y = (1 - k) * 60;
+        var sq = 1 + (1 - OE.tw(t, 0.02 + i * st, 0.35, E.outCubic)) * 0.25;
+        c.style.transform = "translateY(" + y.toFixed(2) + "%) scale(" + (1 / sq).toFixed(4) + "," + sq.toFixed(4) + ")";
+        c.style.opacity = Math.min(1, k * 3);
+      });
+      if (hasTag) {
+        tagI.style.transform = "scaleX(" + OE.tw(t, 0.45, 0.55, E.outExpo).toFixed(4) + ")";
+        tagT.style.transform = "translateY(" + ((1 - OE.tw(t, 0.6, 0.55, E.outExpo)) * 110).toFixed(2) + "%)";
+      }
+      if (hasCta) {
+        var c = OE.tw(t, 0.9, 0.5, E.outBack);
+        cta.style.transform = "scale(" + c.toFixed(4) + ")";
+        cta.style.opacity = Math.min(1, c * 2);
+      }
+      spark.forEach(function (s) {
+        var a = OE.tw(t, s.at, 0.35, E.outBack), b = OE.tw(t, s.at + 0.35, 0.5, E.inCubic);
+        s.el.style.transform = "scale(" + (a * (1 - b * 0.85)).toFixed(4) + ") rotate(" + ((t - s.at) * 90).toFixed(1) + "deg)";
+      });
+    });
+  })();
+</script>

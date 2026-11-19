@@ -29,6 +29,9 @@ export interface VisualStats {
   soft: number[];
   duplicates: number[];
   darkOpening?: number;
+  /** Shots where the vision model saw a rig / hands (cautions an ad cannot ship with). */
+  rig: number[];
+  hands: number[];
 }
 
 /** Pure: stats over the shots detected in a render. */
@@ -62,7 +65,9 @@ export function visualStats(shots: Shot[]): VisualStats {
     while (j + 1 < body.length && Math.abs(body[j + 1].duration - body[i].duration) <= body[i].duration * 0.1) j++;
     if (j - i + 1 > sameRun.count) sameRun = { count: j - i + 1, length: body[i].duration, at: body[i].start };
   }
-  return { sameRun, shots: shots.length, meanShot: mean, medianShot: median, pacingVariation: mean ? sd / mean : 0, sameLength, rejected, soft, duplicates, darkOpening };
+  const rig = shots.filter((s) => s.insight?.rig && s.duration >= 0.3).map((s) => s.start);
+  const hands = shots.filter((s) => s.insight?.hands && s.duration >= 0.3).map((s) => s.start);
+  return { rig, hands, sameRun, shots: shots.length, meanShot: mean, medianShot: median, pacingVariation: mean ? sd / mean : 0, sameLength, rejected, soft, duplicates, darkOpening };
 }
 
 export function visualWarnings(v: VisualStats, o: { dialogue?: boolean } = {}): string[] {
@@ -73,6 +78,7 @@ export function visualWarnings(v: VisualStats, o: { dialogue?: boolean } = {}): 
   } else if (!o.dialogue && v.sameRun.count >= 5) {
     w.push(`metronome pacing: ${v.sameRun.count} shots in a row are all ~${v.sameRun.length.toFixed(2)}s from ${fmt(v.sameRun.at)}. Vary it: let a hero shot breathe, then quicken into the payoff.`);
   }
+  if (v.rig.length) w.push(`rig visible (stick / stand / wire holding the subject) at ${v.rig.map(fmt).join(", ")}: remove it in VFX, crop it out, or replace the shot`);
   if (v.duplicates.length) w.push(`back-to-back shots look the same at ${v.duplicates.map(fmt).join(", ")}: a jump cut or a wasted shot; cut away or use a different angle`);
   if (v.darkOpening) w.push(`${v.darkOpening.toFixed(1)}s of near-black picture in the first 3 s: a weak hook. Open on the best image (titles over picture, not over black).`);
   if (v.soft.length > Math.max(2, v.shots / 3)) w.push(`${v.soft.length} very soft shots (${v.soft.slice(0, 5).map(fmt).join(", ")}): fine as deliberate bokeh, not for the product or the payoff`);

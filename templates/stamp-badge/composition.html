@@ -1,0 +1,75 @@
+<style>
+  .sb { position: absolute; inset: 0; display: flex; padding: 6% 7%; }
+  .sb.center { align-items: center; justify-content: center; }
+  .sb.top-left { align-items: flex-start; justify-content: flex-start; }
+  .sb.top { align-items: flex-start; justify-content: center; }
+  .sb.top-right { align-items: flex-start; justify-content: flex-end; }
+  .sb.left { align-items: center; justify-content: flex-start; }
+  .sb.right { align-items: center; justify-content: flex-end; }
+  .sb.bottom-left { align-items: flex-end; justify-content: flex-start; }
+  .sb.bottom { align-items: flex-end; justify-content: center; }
+  .sb.bottom-right { align-items: flex-end; justify-content: flex-end; }
+  .sb-wrap { position: relative; width: 34rem; height: 34rem; filter: drop-shadow(0 1.6rem 3rem rgba(0, 0, 0, 0.32)); }
+  .sb-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .sb-ring text { font: 400 2.55rem var(--font), "Archivo Black", Inter, sans-serif; letter-spacing: 0.18em; fill: var(--ink); }
+  .sb-center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font: 400 7.6rem/0.9 var(--font), "Archivo Black", Inter, sans-serif; letter-spacing: -0.02em; color: var(--ink); }
+</style>
+<div class="sb {{position}}">
+  <div class="sb-wrap" id="sb-wrap">
+    <svg viewBox="-170 -170 340 340" id="sb-svg">
+      <path id="sb-seal" fill="var(--accent)"></path>
+      <circle r="118" fill="none" stroke="var(--ink)" stroke-width="2" stroke-dasharray="2 7" opacity="0.55"></circle>
+      <g class="sb-ring" id="sb-ring">
+        <path id="sb-arc" d="M 0,-128 a 128,128 0 1,1 0,256 a 128,128 0 1,1 0,-256" fill="none"></path>
+        <text><textPath href="#sb-arc" id="sb-tp"></textPath></text>
+      </g>
+    </svg>
+    <div class="sb-center" id="sb-center"></div>
+  </div>
+</div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var n = Math.max(0, Math.min(40, Math.round(Number(P.points == null ? 16 : P.points))));
+    var R = 160, r = 146, d = "";
+    if (n < 3) d = "M 160,0 A 160,160 0 1,1 -160,0 A 160,160 0 1,1 160,0 Z";
+    else {
+      // Scalloped seal: quadratic bumps between n points on two radii.
+      for (var i = 0; i < n; i++) {
+        var a0 = (i / n) * Math.PI * 2, a1 = ((i + 0.5) / n) * Math.PI * 2, a2 = ((i + 1) / n) * Math.PI * 2;
+        var x0 = Math.cos(a0) * r, y0 = Math.sin(a0) * r, cx = Math.cos(a1) * (R + 14), cy = Math.sin(a1) * (R + 14), x2 = Math.cos(a2) * r, y2 = Math.sin(a2) * r;
+        d += (i ? " " : "M " + x0.toFixed(2) + "," + y0.toFixed(2)) + " Q " + cx.toFixed(2) + "," + cy.toFixed(2) + " " + x2.toFixed(2) + "," + y2.toFixed(2);
+      }
+      d += " Z";
+    }
+    OE.$("#sb-seal").setAttribute("d", d);
+    var ring = String(P.ring || "").trim();
+    if (ring) {
+      // Whole repetitions only, then stretch the spacing so the ring closes exactly on itself.
+      var unit = /[•·*\-–—]\s*$/.test(ring) ? ring + " " : ring + " • ";
+      var k = Math.max(1, Math.round(38 / unit.length));
+      var tp = OE.$("#sb-tp");
+      tp.textContent = new Array(k + 1).join(unit);
+      tp.parentNode.setAttribute("textLength", String((2 * Math.PI * 128 - 6).toFixed(1)));
+      tp.parentNode.setAttribute("lengthAdjust", "spacing");
+      tp.setAttribute("textLength", String((2 * Math.PI * 128 - 6).toFixed(1)));
+      tp.setAttribute("lengthAdjust", "spacing");
+    }
+    OE.$("#sb-center").innerHTML = String(P.center || "").split("|").map(OE.esc).join("<br>");
+    var wrap = OE.$("#sb-wrap"), ringG = OE.$("#sb-ring"), center = OE.$("#sb-center");
+    var sc = Number(P.scale) || 1;
+    var outS = Math.max(1.4, D - 0.5);
+    OE.run(function (t) {
+      var k = OE.tw(t, 0.02, 0.7, E.outBack);
+      var o = OE.tw(t, outS, 0.45, E.inBack || E.inCubic);
+      var s = (0.2 + 0.8 * k) * (1 - o);
+      var rot = (1 - k) * -40 + o * 120 - 8;
+      wrap.style.opacity = Math.min(1, k * 3) * (1 - o);
+      wrap.style.transform = "scale(" + (s * sc).toFixed(4) + ") rotate(" + rot.toFixed(2) + "deg)";
+      ringG.setAttribute("transform", "rotate(" + (t * 32).toFixed(3) + ")");
+      var c = OE.tw(t, 0.3, 0.5, E.outBack);
+      center.style.transform = "scale(" + (0.4 + 0.6 * c).toFixed(4) + ") rotate(8deg)";
+      center.style.opacity = c;
+    });
+  })();
+</script>

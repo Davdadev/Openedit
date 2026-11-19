@@ -65,12 +65,51 @@ lists, or recreate the *idea* (not a 1:1 copy) with `create_motion_template`.
 
 Details and preset choices: `references/craft.md`.
 
+## OpenEdit's own title library (no pack needed, works in every host)
+
+Original, seekable HyperFrames templates in the style of modern social / ad title packs.
+All take `position` (center, top-left … bottom-right), `scale`, `accent/accent2/accent3`,
+`ink` (text on coloured shapes), `color` and `font`:
+
+| Template | Look | Use for |
+|---|---|---|
+| `pop-lines` | each line on its own colour block, wiped in, tilt optional | hooks, ad lines, statements (`text` lines split by `\|`) |
+| `kinetic-stack` | condensed uppercase stack slamming in with motion blur + accent bar | hype moments, 2-4 word punchlines |
+| `tilt-tag` | skewed bold-italic tag + small sub-tag | product names, "watch this", punchy captions |
+| `chip-label` | icon tile + pill with typed text, optional second chip | CTAs, steps, features, UI callouts |
+| `stamp-badge` | scalloped seal with a turning text ring | "new", "limited", offers, stickers on product shots |
+| `speech-bubble` | glossy bubble, typing dots, words rise in | reactions, what the product would say |
+| `end-card` | brand word bounces in, tagline block, CTA pill, sparkles | the last 2-3 s of an ad |
+| `title-card`, `lower-third`, `callout`, `counter`, `quote`, `chapter`, `subscribe` | cleaner editorial set | interviews, explainers |
+
+Pick ONE family per video and keep its colours (brand or the footage's own palette: sample
+the dominant colours from `analyze_footage`). A playful ad: `pop-lines` hook + `stamp-badge`
+once + `end-card`. A tech promo: `chip-label` + `kinetic-stack`. Never all of them.
+Over footage, place type where `analyze_footage` shows calm space (sky, out-of-focus areas),
+never on the product or a face. For hundreds more blocks (glitch, film grain, charts, 3D,
+camera moves) the HyperFrames plugin's `hyperframes:hyperframes-registry` skill installs
+editable source you can adapt with `create_motion_template`.
+
+## Design partners (other plugins, when installed)
+
+- **Figma MCP**: `get_design_context`, `get_variable_defs`, `get_screenshot`,
+  `get_motion_context` (see below). If its tools ask for authentication, tell the user to
+  connect Figma (claude.ai Settings → Connectors, or `/mcp` in the CLI).
+- **Design plugin** (Anthropic): `design-critique` on a frame strip before shipping a title
+  set; `ux-copy` for taglines, CTAs and on-screen words (short, specific, in the brand voice);
+  `accessibility-review` for contrast and reading time; `design-system` to keep a brand's
+  motion graphics consistent across videos.
+- **HyperFrames plugin** (`hyperframes:*` skills): the render contract, the 450-block
+  registry, Figma storyboards, `media-use` for looks and colour grades.
+
 ## Figma → motion template
 
 Full step-by-step with the Figma MCP tool names, layer naming and the motion spec:
 `references/figma-workflow.md`. In short: `get_metadata` → `get_design_context` on the frame
-→ `get_variable_defs` for brand colours → `get_screenshot` to compare → `create_motion_template
-{figmaCode, motion}` → look at the strip, fix, call again with the same name → `place_graphic`.
+→ `get_variable_defs` for brand colours → `get_screenshot` to compare → if the designer
+animated the frame, `get_motion_context {recursive: true}` → `create_motion_template
+{figmaCode, figmaMotion}` (their keyframes, made seekable), else `{figmaCode, motion}`
+(presets) → look at the strip, fix, call again with the same name → `place_graphic`.
 
 ## Template packs and licences
 

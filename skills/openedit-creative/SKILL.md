@@ -12,30 +12,39 @@ is the default failure. This skill exists to avoid it.
 
 ## The workflow (do not skip steps)
 
-1. **Log the footage**: `analyze_footage {folder}`. LOOK at the contact sheets. Write a shot
-   list: hero shots (the best images you have), coverage, motion, and every shot that is
-   unusable (blank, blown, black, rig or crew visible, lighting gear, the ground, hands fixing
-   things, focus hunting). The ✗ REJECT and ⚠ tags help; your eye decides.
+1. **Log the footage**: `analyze_footage {folder, context: "<what the piece is for>"}`. When
+   Ollama is installed, a local vision model (gemma3:4b) describes every shot and flags rigs,
+   production gear, hands, frames with no subject and missed focus, with a 1-10 beauty
+   score; the ✗ REJECT / ⚠ tags include what it saw. LOOK at the contact sheets anyway.
+   Write a shot list: hero shots, coverage, motion, and every unusable shot. The model is
+   small: trust its flags more than its captions, and your eye over both.
 2. **Find the idea** in one line before touching the timeline: what is this piece *about*,
    and what is the single moment it builds to? ("Candy floats through ordinary worlds, then
    lands in a mouth: Say ahh.") The best moment in the footage is usually the payoff: build
    toward it, don't spend it in the first second.
-3. **Structure**: pick a shape from [references/structures.md](references/structures.md)
+3. **Style direction**: choose ONE from [references/styles.md](references/styles.md) (playful
+   pop, premium, tech clean, hype, warm lifestyle, documentary). It fixes the look, pace,
+   transitions, title templates and sound together.
+4. **Structure**: pick a shape from [references/structures.md](references/structures.md)
    (hook / build / payoff / end card for most spots). Assign shots to sections.
-4. **Pace**: shot lengths must VARY. Hero shots 1.5–3 s; the build quickens (0.4–0.8 s); the
+5. **Pace**: shot lengths must VARY. Hero shots 1.5–3 s; the build quickens (0.4–0.8 s); the
    payoff gets room and often a ramp or a hold; the end card 2–3 s. Same-length cuts are a
    slideshow, beat-synced or not.
-5. **Choose the look** (`look.preset`): candy/punchy for food, toys and products; warm-film
+6. **Choose the look** (`look.preset`): candy/punchy for food, toys and products; warm-film
    for lifestyle and nostalgia; cool-clean for tech; moody for drama; bright-airy for beauty
    and wellness. One look for the whole piece; match exposure shot to shot with `exposure`.
-6. **Music and sound**: music sets the vibe more than any picture choice. Pick a track whose
+7. **Music and sound**: music sets the vibe more than any picture choice. Pick a track whose
    energy matches the idea (`get_media {kind:"music"}`; audition 2–3). Sound-design the key
    moments: a whoosh on whips, a pop or crunch on the payoff, a riser into the end card
    (`get_media {kind:"sfx"}` → `sfx`). Silence before the payoff hits harder than more music.
-7. **Typography**: few words, big, on picture, never on black. One idea per card. Check
-   `graphics_catalog`; brand fonts and colours from Figma if the user has them.
-8. **Build**: `build_sequence` with the full spec. Read its contact sheet and warnings.
-9. **Review**: `review_edit {path}` (it analyses the render's own shots: unusable frames,
+8. **Typography**: few words, big, on picture, never on black. One idea per card. Use the
+   direction's templates (`pop-lines`, `kinetic-stack`, `tilt-tag`, `chip-label`,
+   `stamp-badge`, `speech-bubble`, `end-card`, or the user's packs and Figma designs via
+   `graphics_catalog`) in `build_sequence.graphics`, coloured from the footage palette or the
+   brand. With the Design plugin installed, run `ux-copy` on the words and `design-critique`
+   on the sheet. Place type in calm areas of the frame, never on the product.
+9. **Build**: `build_sequence` with the full spec. Read its contact sheet and warnings.
+10. **Review**: `review_edit {path}` (it analyses the render's own shots: unusable frames,
    metronome pacing, duplicate shots, a dark opening, loudness). Fix every warning, re-render.
    Then ask: would I stop scrolling for the first second? Is there one moment I'd remember?
 

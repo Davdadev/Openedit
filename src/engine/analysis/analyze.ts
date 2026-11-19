@@ -6,7 +6,7 @@
  * Pipeline per file: one streaming decode -> FrameStats -> boundaries -> shots;
  * one select pass for 1-3 representative 320px JPEGs per shot; one Vision helper run.
  */
-import { usabilityTag } from "./usable.js";
+import { shotUsability, usabilityTag } from "./usable.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { fileKey, mediaKind, probe, resolveMediaPath } from "../media.js";
@@ -80,6 +80,8 @@ export interface Shot {
   shotSize: ShotSize;
   labels: { label: string; conf: number }[];
   reps: ShotRep[];
+  /** What a local vision-language model sees (insight.ts); absent when it is not set up. */
+  insight?: import("./insight.js").ShotInsight;
 }
 
 export interface FootageAnalysis {
@@ -351,7 +353,7 @@ export function shotLine(s: Shot): string {
   return `${s.id} ${mmss(s.start)}–${mmss(s.end)} ${s.duration.toFixed(1)}s ${s.transition === "start" ? "" : `[${s.transition}] `}${s.camera}, motion ${s.motion.toFixed(3)}, ${s.exposure}${sharp}, ${faces}, ${s.palette
     .slice(0, 3)
     .map((p) => p.hex)
-    .join(" ")}${labels ? ` | ${labels}` : ""}${usabilityTag(s)}`;
+    .join(" ")}${labels ? ` | ${labels}` : ""}${s.insight ? ` — "${s.insight.caption}"${s.insight.beauty ? ` (${s.insight.beauty}/10)` : ""}` : ""}${usabilityTag(s)}`;
 }
 
 const SIZE_COLOR: Record<ShotSize, string> = {
@@ -375,8 +377,8 @@ export async function footageSheets(analyses: FootageAnalysis[], outBase: string
       return {
         file: rep.thumb,
         label: `${s.id} @${mmss(s.start)}`,
-        sub: `${s.duration.toFixed(1)}s ${s.shotSize === "no-faces" ? "" : `${s.shotSize} `}${s.camera}${s.labels[0] ? ` · ${s.labels.slice(0, 2).map((l) => l.label).join(", ")}` : ""}`,
-        color: SIZE_COLOR[s.shotSize],
+        sub: sheetSub(s),
+        color: shotUsability(s).status === "reject" ? "#e5484d" : SIZE_COLOR[s.shotSize],
       };
     });
     const file = `${outBase}-${out.length + 1}.jpg`;
@@ -384,6 +386,18 @@ export async function footageSheets(analyses: FootageAnalysis[], outBase: string
     out.push(file);
   }
   return out;
+}
+
+/** Contact-sheet caption: the vision model's flags or subject when known, else camera + labels. */
+function sheetSub(s: Shot): string {
+  const v = shotUsability(s);
+  const head = `${s.duration.toFixed(1)}s`;
+  if (v.status === "reject") return `${head} ✗ ${v.reasons[0].split(/[:(]/)[0].trim()}`;
+  if (s.insight) {
+    const flag = s.insight.rig ? " ⚠ rig" : s.insight.hands ? " ⚠ hands" : "";
+    return `${head}${flag} · ${s.insight.subject ?? s.insight.caption.slice(0, 40)}${s.insight.beauty ? ` · ${s.insight.beauty}/10` : ""}`;
+  }
+  return `${head} ${s.shotSize === "no-faces" ? "" : `${s.shotSize} `}${s.camera}${s.labels[0] ? ` · ${s.labels.slice(0, 2).map((l) => l.label).join(", ")}` : ""}`;
 }
 
 /** Find a shot by id across analyses. */

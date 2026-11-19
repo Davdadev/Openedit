@@ -1,0 +1,29 @@
+{
+  "id": "speech-bubble",
+  "description": "Speech bubble: a glossy gradient bubble pops out of its tail with a springy overshoot, typing dots first (optional), then the text rises in word by word; pops away on exit. Reactions, what a product would say, comments, voice-of-customer. Transparent.",
+  "duration": 3.5,
+  "params": {
+    "text": "Bubble text (short)",
+    "tail": "Tail corner: bottom-left (default) | bottom-right",
+    "typing": "true to show typing dots before the text (default true)",
+    "position": "center | top-left | top-right | ... (default top-left)",
+    "scale": "Size multiplier (default 1)",
+    "accent": "Gradient start, default #2F80FF",
+    "accent2": "Gradient end, default #13C2FF",
+    "color": "Text colour, default #FFFFFF",
+    "font": "Font family, default Inter",
+    "background": "Solid background used only for opaque .mp4 output"
+  },
+  "defaults": {
+    "text": "Your brand",
+    "tail": "bottom-left",
+    "typing": true,
+    "position": "top-left",
+    "scale": 1.4,
+    "accent": "#2F80FF",
+    "accent2": "#13C2FF",
+    "color": "#FFFFFF",
+    "font": "Inter",
+    "background": "#1B1B1F"
+  }
+}

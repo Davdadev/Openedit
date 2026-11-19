@@ -149,7 +149,9 @@ function compose(fragment: string, params: Record<string, unknown>, o: ComposeOp
   const vars = [
     `--accent: ${accent};`,
     `--accent2: ${color(params.accent2, accent)};`,
+    `--accent3: ${color(params.accent3, color(params.accent2, accent))};`,
     `--fg: ${color(params.color, "#FFFFFF")};`,
+    `--ink: ${color(params.ink, "#0B0B10")};`,
     `--font: '${font.replace(/'/g, "")}';`,
   ]
     .map((l) => "        " + l)

@@ -1,0 +1,59 @@
+<style>
+  .bb { position: absolute; inset: 0; display: flex; padding: 8% 9%; }
+  .bb.center { align-items: center; justify-content: center; }
+  .bb.top-left { align-items: flex-start; justify-content: flex-start; }
+  .bb.top { align-items: flex-start; justify-content: center; }
+  .bb.top-right { align-items: flex-start; justify-content: flex-end; }
+  .bb.left { align-items: center; justify-content: flex-start; }
+  .bb.right { align-items: center; justify-content: flex-end; }
+  .bb.bottom-left { align-items: flex-end; justify-content: flex-start; }
+  .bb.bottom { align-items: flex-end; justify-content: center; }
+  .bb.bottom-right { align-items: flex-end; justify-content: flex-end; }
+  .bb-b { position: relative; filter: drop-shadow(0 1.6rem 3rem rgba(0, 0, 0, 0.3)); }
+  .bb-body {
+    position: relative; min-width: 22rem; min-height: 12rem; padding: 3rem 5.2rem; border-radius: 7rem; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    box-shadow: inset 0 0.6rem 1.4rem rgba(255, 255, 255, 0.35), inset 0 -0.8rem 1.6rem rgba(0, 0, 0, 0.12);
+  }
+  .bb-tail { position: absolute; bottom: -3.4rem; left: 5rem; width: 7rem; height: 6rem; }
+  .bb-b.br .bb-tail { left: auto; right: 5rem; transform: scaleX(-1); }
+  .bb-text { font: 700 6.6rem/1.05 var(--font), Inter, sans-serif; letter-spacing: -0.02em; color: var(--fg); white-space: nowrap; text-align: center; }
+  .bb-text .oe-w { margin-right: 0.22em; }
+  .bb-dots { position: absolute; display: flex; gap: 1.4rem; }
+  .bb-dots i { width: 2.2rem; height: 2.2rem; border-radius: 50%; background: var(--fg); }
+</style>
+<div class="bb {{position}}">
+  <div class="bb-b" id="bb-b">
+    <svg class="bb-tail" viewBox="0 0 70 60"><path d="M4 0 C 10 28, 8 46, 0 60 C 26 52, 48 34, 62 0 Z" fill="var(--accent)"></path></svg>
+    <div class="bb-body"><div class="bb-text" id="bb-text"></div><div class="bb-dots" id="bb-dots"><i></i><i></i><i></i></div></div>
+  </div>
+</div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var b = OE.$("#bb-b"), dots = OE.$("#bb-dots"), txt = OE.$("#bb-text");
+    var br = P.tail === "bottom-right";
+    if (br) b.classList.add("br");
+    var typing = !(P.typing === false || P.typing === "false");
+    var W = OE.split(txt, P.text, { chars: false });
+    var sc = Number(P.scale) || 1;
+    var dotsEnd = typing ? 0.95 : 0.25;
+    var outS = Math.max(1.6, D - 0.45);
+    var dotEls = Array.prototype.slice.call(dots.children);
+    OE.run(function (t) {
+      var k = OE.tw(t, 0, 0.55, E.outBack);
+      var o = OE.tw(t, outS, 0.35, E.inBack || E.inCubic);
+      b.style.transformOrigin = br ? "90% 110%" : "10% 110%";
+      b.style.transform = "scale(" + (k * (1 - o) * sc).toFixed(4) + ")";
+      b.style.opacity = t <= 0 ? 0 : 1;
+      var dv = typing ? 1 - OE.tw(t, dotsEnd - 0.15, 0.15, E.inCubic) : 0;
+      dots.style.opacity = dv;
+      dotEls.forEach(function (d, i) { d.style.transform = "translateY(" + (-Math.max(0, Math.sin(t * 11 - i * 0.9)) * 1.2).toFixed(3) + "rem)"; });
+      txt.style.visibility = t >= dotsEnd - 0.05 ? "visible" : "hidden";
+      W.words.forEach(function (w, i) {
+        var wk = OE.tw(t, dotsEnd + i * 0.08, 0.45, E.outExpo);
+        w.chars[0].style.transform = "translateY(" + ((1 - wk) * 100).toFixed(2) + "%)";
+      });
+    });
+  })();
+</script>

@@ -105,6 +105,8 @@ export function registerShotTools(server: McpServer): void {
         folder: z.string().optional().describe("A folder of footage (searched recursively)"),
         force: z.boolean().optional().describe("Re-analyse even when cached"),
         maxShots: z.number().int().min(1).max(500).optional().describe("Shot lines to list (default 120)"),
+        insight: z.boolean().optional().describe("Ask the local vision model (Ollama gemma3:4b) what is in each shot: caption, rig/gear/hands visible, no-subject, focus, a 1-10 beauty score. Default on when it is installed; cached; ~2-5 s per new shot."),
+        context: z.string().optional().describe('What the footage is for, to sharpen captions, e.g. "an M&M\'s candy ad"'),
       },
     },
     safe(async (a) => {
@@ -113,6 +115,14 @@ export function registerShotTools(server: McpServer): void {
       const t0 = Date.now();
       const res: FootageAnalysis[] = [];
       for (const f of files) res.push(await analyzeFile(f, { force: a.force }));
+      let insightNote = "";
+      if (a.insight !== false) {
+        const { addInsights } = await import("./insight.js");
+        const r = await addInsights(res, { context: a.context, force: a.force });
+        insightNote = r.reason
+          ? `Insight off: ${r.reason}. (Without it, YOU must spot rigs, gear and junk on the sheets.)`
+          : `Insight (${r.model}, local): ${r.done} shots looked at in ${r.seconds.toFixed(0)}s, ${r.cached} cached, ${r.skipped} skipped (blank/very short).`;
+      }
       const secs = (Date.now() - t0) / 1000;
       const total = res.reduce((s, r) => s + r.duration, 0);
       const sheets = await footageSheets(res, sheetBase(files.length === 1 ? basename(files[0], extname(files[0])) : "footage"), { maxTiles: 96 });
@@ -122,11 +132,12 @@ export function registerShotTools(server: McpServer): void {
         `${files.length} file${files.length > 1 ? "s" : ""}, ${mmss(total)} of footage, ${shots.length} shots (${secs.toFixed(1)}s${secs > 0.5 ? `, ${(total / secs).toFixed(0)}x realtime incl. cache` : ""}).${res.some((r) => !r.vision) ? " Vision unavailable: no labels/faces." : ""}`,
         ...res.map((r) => `- ${basename(r.path)}: ${r.shots.length} shots, ${r.width}x${r.height} ${r.fps}fps, ${r.duration.toFixed(1)}s`),
         "",
-        "Shots (id start–end duration [transition] camera, motion, exposure, faces (size), palette | labels):",
+        insightNote,
+        "Shots (id start–end duration [transition] camera, motion, exposure, faces (size), palette | labels — \"what the vision model sees\" (beauty/10), ✗ REJECT / ⚠ flags):",
         ...shots.slice(0, max).map(shotLine),
         shots.length > max ? `… ${shots.length - max} more (raise maxShots)` : "",
         "",
-        `Contact sheet${sheets.length > 1 ? "s" : ""} (accent bar: red ECU, orange close-up, yellow medium, green wide, blue no faces): ${sheets.join(", ")}`,
+        `Contact sheet${sheets.length > 1 ? "s" : ""} (accent bar: red = REJECT or ECU, orange close-up, yellow medium, green wide, blue no faces): ${sheets.join(", ")}`,
         `Analysis cache: ${analysisDir()}`,
       ];
       return { content: [...sheets.slice(0, 2).map(image), { type: "text", text: lines.filter((l) => l !== "").join("\n") }] };

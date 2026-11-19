@@ -25,7 +25,7 @@ claude:  transcribe -> plan_cuts -> (shows you the plan) -> apply_cuts -> make_c
 | Captions | word-timed SRT / VTT / ASS, imported as a caption track, or burned in with animated styles (`bold-pop`, `karaoke`, `clean`, `minimal`) |
 | Zooms / punch-ins | scale keyframes (Premiere), static zoom (Resolve), zoompan (standalone); `auto_zooms` places them for you |
 | B-roll, music, SFX | `place_clips` on new tracks, gain in dB, music ducking under speech (standalone) |
-| Motion graphics | 7 animated templates rendered with transparent backgrounds via [HyperFrames](https://github.com/heygen-com/hyperframes): title card, lower third, callout, subscribe, counter, quote, chapter |
+| Motion graphics | 14 animated templates (pop-lines, kinetic-stack, tilt-tag, chip-label, stamp-badge, speech-bubble, end-card, plus the editorial set) rendered with transparent backgrounds via [HyperFrames](https://github.com/heygen-com/hyperframes): title card, lower third, callout, subscribe, counter, quote, chapter |
 | Reframe | 9:16, 1:1, 4:5, 16:9 that follows the speaker's face (macOS Vision, smoothed like a camera operator), or a manual `focusX` |
 | Loudness | two-pass EBU R128: -14 LUFS, true peak under -1.5 dBTP |
 | Any editor | `export_timeline`: FCP7 XML (Premiere, Resolve), FCPXML 1.10 (Final Cut Pro, Resolve), CMX 3600 EDL, SRT |
@@ -63,6 +63,25 @@ Restart Claude Code. The first start builds the server (`npm ci` + `tsc`, about 
 details, troubleshooting and updating are in [docs/SKILLS.md](docs/SKILLS.md). If you also used
 the manual install below, remove that server (`claude mcp remove -s user openedit`) so the
 tools are not listed twice.
+
+### Recommended companions
+
+OpenEdit works on its own; these make its creative work better:
+
+- **Shot insight (local vision model).** `brew install ollama`, start it, then
+  `ollama pull gemma3:4b` (3.3 GB). `analyze_footage` then describes every shot and flags
+  rigs, production gear, hands, frames with no subject and missed focus; `review_edit` checks
+  the render with it. All on your machine. Use another model with `OPENEDIT_VLM_MODEL`.
+- **HyperFrames skills** (HeyGen, Apache-2.0): the render contract OpenEdit's graphics use,
+  ~450 editable blocks, Figma storyboards, looks and grades.
+  `/plugin marketplace add heygen-com/hyperframes` then `/plugin install hyperframes@hyperframes`
+  (the repo uses Git LFS: install `git-lfs` first). Its skills send a usage beacon through the
+  HyperFrames CLI's telemetry, which has an opt-out.
+- **Figma** (official plugin or the claude.ai connector): `get_design_context` and
+  `get_motion_context` feed `create_motion_template {figmaCode, figmaMotion}`, so a designer's
+  frame and their own animation become an editable title in any editor.
+- **Design** plugin (Anthropic): `design-critique`, `ux-copy`, `accessibility-review` for
+  titles, end cards and on-screen words.
 
 ## Install
 

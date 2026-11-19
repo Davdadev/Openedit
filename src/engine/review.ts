@@ -458,6 +458,9 @@ export async function reviewEdit(
     try {
       const { analyzeFile } = await import("./analysis/analyze.js");
       const an = await analyzeFile(abs, { force: true });
+      // What is in each shot of the render (local vision model, when installed).
+      const { addInsights } = await import("./analysis/insight.js");
+      await addInsights([an], { maxShots: 40, force: true }).catch(() => undefined);
       visual = visualStats(an.shots);
       warnings.push(...visualWarnings(visual, { dialogue: Boolean(info.transcript) }));
       if (!joins.length) joins.push(...an.shots.slice(1).map((x) => x.start));

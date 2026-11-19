@@ -1,0 +1,35 @@
+{
+  "id": "end-card",
+  "description": "Brand end card for ads and promos: the brand word bounces in letter by letter, a tagline lands on a colour block, an optional call-to-action pill and small sparkles; holds still for reading, no exit (the cut ends it). Over a calm, slowed shot or a solid colour.",
+  "duration": 3,
+  "params": {
+    "brand": "Brand word / product name (big)",
+    "tagline": "One line (optional)",
+    "cta": "Call to action pill, e.g. 'Available now' (optional)",
+    "sparkles": "true to add a few sparkles (default true)",
+    "position": "center (default) | bottom | top",
+    "scale": "Size multiplier (default 1)",
+    "accent": "Tagline block colour, default #FFD400",
+    "accent2": "CTA pill colour, default #FFFFFF",
+    "accent3": "Sparkle colour, default #FFFFFF",
+    "color": "Brand word colour, default #FFFFFF",
+    "ink": "Text on the tagline block and pill, default #111111",
+    "font": "Font family, default Archivo Black",
+    "background": "Solid background used only for opaque .mp4 output"
+  },
+  "defaults": {
+    "brand": "Brand",
+    "tagline": "Say it in one line.",
+    "cta": "",
+    "sparkles": true,
+    "position": "center",
+    "scale": 1,
+    "accent": "#FFD400",
+    "accent2": "#FFFFFF",
+    "accent3": "#FFFFFF",
+    "color": "#FFFFFF",
+    "ink": "#111111",
+    "font": "Archivo Black",
+    "background": "#14141A"
+  }
+}

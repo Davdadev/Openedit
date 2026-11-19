@@ -56,6 +56,9 @@ async function doctor(): Promise<number> {
 
   const models = WHISPER_MODELS.filter((m) => existsSync(modelPath(m)));
   line(models.length > 0 ? true : null, "whisper models", models.length ? models.join(", ") : `none yet (downloaded on first use into ${paths.models()})`);
+  const { insightStatus } = await import("./engine/analysis/insight.js");
+  const vlm = await insightStatus();
+  line(vlm.ok ? true : null, "vision model (shot insight)", vlm.ok ? `${vlm.model} via Ollama` : `${vlm.reason} — optional: analyze_footage flags rigs, gear and junk shots with it`);
   const plans = existsSync(paths.plans()) ? readdirSync(paths.plans()).length : 0;
   line(true, "state dir", `${paths.home()} (${plans} saved plans)`);
 

@@ -1,0 +1,53 @@
+<style>
+  .ks { position: absolute; inset: 0; display: flex; padding: 6% 8%; }
+  .ks.center { align-items: center; justify-content: center; }
+  .ks.top-left { align-items: flex-start; justify-content: flex-start; }
+  .ks.top { align-items: flex-start; justify-content: center; }
+  .ks.top-right { align-items: flex-start; justify-content: flex-end; }
+  .ks.left { align-items: center; justify-content: flex-start; }
+  .ks.right { align-items: center; justify-content: flex-end; }
+  .ks.bottom-left { align-items: flex-end; justify-content: flex-start; }
+  .ks.bottom { align-items: flex-end; justify-content: center; }
+  .ks.bottom-right { align-items: flex-end; justify-content: flex-end; }
+  .ks-row { display: flex; align-items: stretch; gap: 2.4rem; transform-origin: left center; filter: drop-shadow(0 1rem 2.4rem rgba(0, 0, 0, 0.35)); }
+  .ks-bar { width: 1.3rem; background: var(--accent); transform-origin: top center; box-shadow: 0 0 2.4rem color-mix(in srgb, var(--accent) 60%, transparent); }
+  .ks-lines { display: flex; flex-direction: column; }
+  .ks-line { display: block; overflow: hidden; padding: 0 0.1em; }
+  .ks-line span { display: inline-block; font: 400 18rem/0.86 var(--font), "League Gothic", Oswald, Impact, sans-serif; text-transform: uppercase; letter-spacing: 0.005em; color: var(--fg); white-space: nowrap; }
+  .ks-line span.hl { color: var(--accent); }
+</style>
+<div class="ks {{position}}"><div class="ks-row" id="ks-row"><i class="ks-bar" id="ks-bar"></i><div class="ks-lines" id="ks-lines"></div></div></div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var hl = String(P.highlight || "").toLowerCase().split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    var lines = String(P.text || "").split("|").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 5);
+    var box = OE.$("#ks-lines");
+    box.innerHTML = lines.map(function (l) {
+      var isHl = hl.indexOf(l.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "")) >= 0 || hl.some(function (h) { return l.toLowerCase().indexOf(h) >= 0; });
+      return '<div class="ks-line"><span class="' + (isHl ? "hl" : "") + '">' + OE.esc(l) + "</span></div>";
+    }).join("");
+    // Fewer lines -> bigger type, so the stack keeps its weight.
+    var size = [0, 26, 21, 18, 15, 12.5][lines.length] || 12;
+    Array.prototype.forEach.call(box.querySelectorAll(".ks-line span"), function (s) { s.style.fontSize = size + "rem"; });
+    var row = OE.$("#ks-row"), bar = OE.$("#ks-bar");
+    row.style.transform = "scale(" + (Number(P.scale) || 1) + ")";
+    var spans = Array.prototype.slice.call(box.querySelectorAll(".ks-line span"));
+    var outS = Math.max(1.2, D - 0.5);
+    OE.run(function (t) {
+      bar.style.transform = "scaleY(" + (OE.tw(t, 0, 0.5, E.outExpo) * (1 - OE.tw(t, outS + 0.15, 0.3, E.inQuart))).toFixed(4) + ")";
+      spans.forEach(function (s, i) {
+        var dir = i % 2 ? 1 : -1;
+        var st = 0.06 + i * 0.11;
+        var k = OE.tw(t, st, 0.42, E.outExpo);
+        var o = OE.tw(t, outS + i * 0.05, 0.32, E.inQuart);
+        // Velocity-based blur: fast at the start of the slam, sharp once it lands.
+        var v = (1 - OE.tw(t, st, 0.3, E.outCubic)) * (t >= st ? 1 : 0);
+        var x = (1 - k) * 60 * dir;
+        s.style.transform = "translate3d(" + x.toFixed(2) + "%," + (o * 110).toFixed(2) + "%,0) skewX(" + (-(1 - k) * 14 * dir).toFixed(2) + "deg)";
+        s.style.filter = "blur(" + (v * 1.6 + o * 0.4).toFixed(3) + "rem)";
+        s.style.opacity = t < st ? 0 : 1;
+      });
+    });
+  })();
+</script>

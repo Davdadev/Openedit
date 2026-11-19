@@ -1,0 +1,29 @@
+{
+  "id": "pop-lines",
+  "description": "Stacked highlight-box title: each line sits on its own colour block; blocks wipe in with a stagger, text rises inside them, slight tilt optional; exits by wiping away. Social / ad / hook titles over footage. Transparent.",
+  "duration": 3.5,
+  "params": {
+    "text": "Lines separated by | (max 3), e.g. 'The idea lives|in the layout.'",
+    "position": "center | top-left | top | top-right | left | right | bottom-left | bottom | bottom-right (default center)",
+    "tilt": "Rotation in degrees, e.g. -3 (default 0)",
+    "scale": "Size multiplier (default 1)",
+    "accent": "Colour of block 1 (hex), default #FFD60A",
+    "accent2": "Colour of block 2, default #FF5A1F",
+    "accent3": "Colour of block 3, default #3D5AFE",
+    "ink": "Text colour on the blocks, default #0B0B10",
+    "font": "Font family, default Archivo Black",
+    "background": "Solid background used only for opaque .mp4 output"
+  },
+  "defaults": {
+    "text": "The idea lives|in the layout.",
+    "position": "center",
+    "tilt": 0,
+    "scale": 1,
+    "accent": "#FFD60A",
+    "accent2": "#FF5A1F",
+    "accent3": "#3D5AFE",
+    "ink": "#0B0B10",
+    "font": "Archivo Black",
+    "background": "#1B1B1F"
+  }
+}

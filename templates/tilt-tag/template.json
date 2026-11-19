@@ -1,0 +1,31 @@
+{
+  "id": "tilt-tag",
+  "description": "Tilted tag: a skewed bold-italic bar whips in and settles at an angle, a small sub-tag pops out underneath; slides out on exit. Punchy captions, product names, 'watch this' moments. Transparent.",
+  "duration": 3,
+  "params": {
+    "text": "Main tag text",
+    "sub": "Small sub-tag (optional)",
+    "angle": "Tilt in degrees (default -6)",
+    "position": "center | bottom-left | top-left | ... (default center)",
+    "scale": "Size multiplier (default 1)",
+    "accent": "Tag colour, default #FF3B1F",
+    "accent2": "Sub-tag colour, default #FFD400",
+    "color": "Tag text colour, default #FFFFFF",
+    "ink": "Sub-tag text colour, default #111111",
+    "font": "Font family, default Archivo Black",
+    "background": "Solid background used only for opaque .mp4 output"
+  },
+  "defaults": {
+    "text": "Just type it right",
+    "sub": "",
+    "angle": -6,
+    "position": "center",
+    "scale": 1,
+    "accent": "#FF3B1F",
+    "accent2": "#FFD400",
+    "color": "#FFFFFF",
+    "ink": "#111111",
+    "font": "Archivo Black",
+    "background": "#1B1B1F"
+  }
+}

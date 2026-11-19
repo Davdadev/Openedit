@@ -1,0 +1,50 @@
+<style>
+  .tt { position: absolute; inset: 0; display: flex; padding: 8% 8%; }
+  .tt.center { align-items: center; justify-content: center; }
+  .tt.top-left { align-items: flex-start; justify-content: flex-start; }
+  .tt.top { align-items: flex-start; justify-content: center; }
+  .tt.top-right { align-items: flex-start; justify-content: flex-end; }
+  .tt.left { align-items: center; justify-content: flex-start; }
+  .tt.right { align-items: center; justify-content: flex-end; }
+  .tt.bottom-left { align-items: flex-end; justify-content: flex-start; }
+  .tt.bottom { align-items: flex-end; justify-content: center; }
+  .tt.bottom-right { align-items: flex-end; justify-content: flex-end; }
+  .tt-grp { position: relative; display: flex; flex-direction: column; align-items: flex-end; filter: drop-shadow(0 1.4rem 2.8rem rgba(0, 0, 0, 0.32)); }
+  .tt-tag { position: relative; padding: 1.6rem 4.2rem 2rem; }
+  .tt-tag i { position: absolute; inset: 0; background: var(--accent); transform: skewX(-12deg); }
+  .tt-tag span { position: relative; display: block; font: italic 400 9.4rem/1 var(--font), "Archivo Black", Inter, sans-serif; letter-spacing: -0.025em; color: var(--fg); white-space: nowrap; }
+  .tt-sub { position: relative; margin: -1.2rem 3rem 0 0; padding: 0.8rem 2.4rem 1rem; }
+  .tt-sub i { position: absolute; inset: 0; background: var(--accent2); transform: skewX(-12deg); }
+  .tt-sub span { position: relative; display: block; font: 400 3.4rem/1 var(--font), "Archivo Black", Inter, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink); white-space: nowrap; }
+  .tt-sub:has(span:empty) { display: none; }
+</style>
+<div class="tt {{position}}">
+  <div class="tt-grp" id="tt-grp">
+    <div class="tt-tag" id="tt-tag"><i></i><span>{{text}}</span></div>
+    <div class="tt-sub" id="tt-sub"><i></i><span>{{sub}}</span></div>
+  </div>
+</div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var ang = P.angle === undefined || P.angle === "" ? -6 : Number(P.angle) || 0;
+    var sc = Number(P.scale) || 1;
+    var grp = OE.$("#tt-grp"), tag = OE.$("#tt-tag"), sub = OE.$("#tt-sub");
+    var hasSub = !!String(P.sub || "").trim();
+    var outS = Math.max(1.2, D - 0.45);
+    OE.run(function (t) {
+      var k = OE.tw(t, 0, 0.5, E.outExpo);
+      var o = OE.tw(t, outS, 0.38, E.inQuart);
+      var settle = OE.tw(t, 0.1, 0.7, E.outBack);
+      var x = (1 - k) * -140 + o * 160;
+      grp.style.transform = "translateX(" + x.toFixed(2) + "rem) rotate(" + (ang * settle + (1 - settle) * ang * 2.2).toFixed(2) + "deg) scale(" + sc + ")";
+      tag.style.filter = "blur(" + ((1 - OE.tw(t, 0, 0.32, E.outCubic)) * 1.4 + o * 1.2).toFixed(3) + "rem)";
+      grp.style.opacity = t <= 0 ? 0 : 1;
+      if (hasSub) {
+        var s = OE.tw(t, 0.42, 0.45, E.outBack);
+        sub.style.transform = "scale(" + s.toFixed(4) + ") rotate(" + ((1 - s) * 10).toFixed(2) + "deg)";
+        sub.style.transformOrigin = "right center";
+      }
+    });
+  })();
+</script>

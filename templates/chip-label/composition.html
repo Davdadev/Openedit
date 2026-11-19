@@ -1,0 +1,66 @@
+<style>
+  .cl { position: absolute; inset: 0; display: flex; padding: 7% 7.5%; }
+  .cl.center { align-items: center; justify-content: center; }
+  .cl.top-left { align-items: flex-start; justify-content: flex-start; }
+  .cl.top { align-items: flex-start; justify-content: center; }
+  .cl.top-right { align-items: flex-start; justify-content: flex-end; }
+  .cl.left { align-items: center; justify-content: flex-start; }
+  .cl.right { align-items: center; justify-content: flex-end; }
+  .cl.bottom-left { align-items: flex-end; justify-content: flex-start; }
+  .cl.bottom { align-items: flex-end; justify-content: center; }
+  .cl.bottom-right { align-items: flex-end; justify-content: flex-end; }
+  .cl-col { display: flex; flex-direction: column; gap: 1.6rem; align-items: flex-start; transform-origin: left center; }
+  .cl-chip { display: flex; align-items: center; gap: 1.2rem; filter: drop-shadow(0 1rem 2.4rem rgba(0, 0, 0, 0.3)); }
+  .cl-chip.two { margin-left: 3.2rem; }
+  .cl-icon {
+    width: 9.6rem; height: 9.6rem; border-radius: 2.6rem; display: grid; place-items: center;
+    font: 800 5.6rem/1 Inter, system-ui, sans-serif; color: var(--fg);
+  }
+  .cl-pill {
+    height: 9.6rem; border-radius: 2.6rem; background: var(--accent3); display: flex; align-items: center;
+    padding: 0 3.4rem; overflow: hidden; white-space: nowrap;
+    font: 600 5.4rem/1 var(--font), Inter, sans-serif; letter-spacing: -0.02em; color: var(--ink);
+  }
+  .cl-pill .oe-c { opacity: 0; }
+  .cl-caret { display: inline-block; width: 0.35rem; height: 5.4rem; margin-left: 0.4rem; background: var(--ink); vertical-align: middle; }
+</style>
+<div class="cl {{position}}"><div class="cl-col" id="cl-col"></div></div>
+<script>
+  (function () {
+    var P = OE.params, D = OE.duration, E = OE.E;
+    var col = OE.$("#cl-col");
+    col.style.transform = "scale(" + (Number(P.scale) || 1) + ")";
+    var defs = [{ text: P.text, icon: P.icon || "→", bg: "var(--accent)" }];
+    if (String(P.text2 || "").trim()) defs.push({ text: P.text2, icon: P.icon2 || "✓", bg: "var(--accent2)" });
+    col.innerHTML = defs.map(function (d, i) {
+      return '<div class="cl-chip' + (i ? " two" : "") + '"><div class="cl-icon" style="background:' + d.bg + '">' + OE.esc(d.icon) + '</div><div class="cl-pill"><span class="cl-t"></span><i class="cl-caret"></i></div></div>';
+    }).join("");
+    var chips = Array.prototype.map.call(col.querySelectorAll(".cl-chip"), function (el, i) {
+      var t = el.querySelector(".cl-t");
+      var S = OE.split(t, defs[i].text, { mask: false });
+      return { icon: el.querySelector(".cl-icon"), pill: el.querySelector(".cl-pill"), caret: el.querySelector(".cl-caret"), chars: S.chars };
+    });
+    // Measure the final pill widths once (all characters visible), then animate from the tile.
+    var widths = chips.map(function (c) { c.chars.forEach(function (x) { x.style.opacity = 1; }); var w = c.pill.offsetWidth; c.chars.forEach(function (x) { x.style.opacity = 0; }); return w; });
+    var outS = Math.max(1.5, D - 0.55);
+    OE.run(function (t) {
+      chips.forEach(function (c, i) {
+        var d = i * 0.45;
+        var k = OE.tw(t, 0.05 + d, 0.6, E.outBack);
+        var o = OE.tw(t, outS + i * 0.06, 0.4, E.inBack || E.inCubic);
+        var s = Math.max(0, k * (1 - o));
+        c.icon.style.transform = "scale(" + s.toFixed(4) + ") rotate(" + ((1 - k) * -90 + o * 45).toFixed(2) + "deg)";
+        var g = OE.tw(t, 0.28 + d, 0.6, E.outExpo);
+        var go = OE.tw(t, outS - 0.12 + i * 0.06, 0.35, E.inQuart);
+        var w = widths[i] * g * (1 - go);
+        c.pill.style.width = Math.max(0, w).toFixed(1) + "px";
+        c.pill.style.paddingLeft = c.pill.style.paddingRight = (Math.min(1, w / 60) * 3.4).toFixed(2) + "rem";
+        c.pill.style.opacity = w > 2 ? 1 : 0;
+        var n = c.chars.length, typeStart = 0.45 + d, per = Math.min(0.045, 0.7 / Math.max(1, n));
+        c.chars.forEach(function (ch, j) { ch.style.opacity = t >= typeStart + j * per ? 1 : 0; });
+        var typing = t < typeStart + n * per + 0.5;
+        c.caret.style.opacity = typing && t > typeStart - 0.1 ? (Math.floor(t * 4) % 2 ? 0.2 : 1) : 0;
+      });
+    });
+  })();
+</script>

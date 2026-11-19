@@ -4,13 +4,14 @@
  * HyperFrames composition under OPENEDIT_HOME/graphics/user/<id>/, registered in the
  * graphics catalog and renderable in every host.
  */
+import { figmaMotionToCss, normalizeAnimationCss } from "./figma-motion.js";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { missingFonts } from "./fonts.js";
 import { graphicsPaths } from "./library.js";
 import { slug } from "./mogrt.js";
 import { type MotionEntry, validateMotion } from "./presets.js";
-import { sanitizeFragment } from "./sanitize.js";
+import { sanitizeCss, sanitizeFragment } from "./sanitize.js";
 import type { TemplateParam } from "./types.js";
 
 export interface FieldSpec {
@@ -54,6 +55,10 @@ export interface CreateTemplateInput {
   tags?: string[];
   /** Provenance, e.g. "figma:FILEKEY:1-23". */
   source?: string;
+  /** Raw get_motion_context response (Figma MCP): its CSS @keyframes are made finite and seekable and added. */
+  figmaMotion?: unknown;
+  /** Rewrite selectors in figmaMotion's CSS, e.g. {"[data-node-id=\"1:23\"]": "#title"}. */
+  figmaSelectorMap?: Record<string, string>;
   overwrite?: boolean;
 }
 
@@ -140,6 +145,20 @@ export async function createMotionTemplate(input: CreateTemplateInput): Promise<
   // Design markup.
   const s = sanitizeFragment(`${input.html ?? ""}\n${input.svg ?? ""}`, input.css ?? "");
   warnings.push(...s.warnings);
+  // CSS animations (hand-written or from Figma's motion context) must be finite and filled to seek.
+  {
+    const n = normalizeAnimationCss(s.css, duration);
+    s.css = n.css;
+    warnings.push(...n.warnings);
+  }
+  let figmaMotionNote: string | undefined;
+  if (input.figmaMotion !== undefined) {
+    const fm = figmaMotionToCss(input.figmaMotion, { duration, selectorMap: input.figmaSelectorMap });
+    s.css = `${s.css}\n/* Figma motion (${fm.keyframes.length} keyframe sets, ${fm.rules} rules) */\n${sanitizeCss(fm.css, warnings, s.googleFonts)}`;
+    warnings.push(...fm.warnings);
+    figmaMotionNote = `Figma motion: ${fm.keyframes.join(", ") || "none"}`;
+    warnings.push(figmaMotionNote);
+  }
 
   // Fields.
   const fields = input.fields ?? [];
@@ -166,7 +185,7 @@ export async function createMotionTemplate(input: CreateTemplateInput): Promise<
   const v = validateMotion(motion, duration);
   errors.push(...v.errors);
   warnings.push(...v.warnings);
-  if (!motion.length) warnings.push("no motion given: the graphic will only fade in/out. Add presets (e.g. mask-up on the title, wipe-right on the plate).");
+  if (!motion.length && input.figmaMotion === undefined && !/animation\s*:/.test(s.css)) warnings.push("no motion given: the graphic will only fade in/out. Add presets (e.g. mask-up on the title, wipe-right on the plate).");
 
   // Assets.
   const assets = input.assets ?? [];
